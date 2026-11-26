@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: data:">
+<title>Mod Manager</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav id="rail"></nav>
+
+<div id="app">
+  <aside id="side">
+    <header><b id="pname"></b><small id="pmeta"></small></header>
+    <div id="tabs">
+      <button data-tab="browse"><span>#</span> browse</button>
+      <button data-tab="installed"><span>#</span> installed <em id="count"></em></button>
+    </div>
+    <div id="foot">
+      <small>TARGET FOLDER</small>
+      <div id="target" class="path"></div>
+      <div class="row"><button id="pick">Change</button><button id="open">Open files</button></div>
+      <button id="deploy" class="primary">Deploy to folder</button>
+      <button id="share">Share code</button>
+      <button id="del" class="danger">Delete profile</button>
+    </div>
+  </aside>
+
+  <main>
+    <header>
+      <input id="q" type="search" placeholder="Search mods" autocomplete="off">
+      <select id="kind"><option value="mod">Mods</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option></select>
+    </header>
+    <section id="list"></section>
+  </main>
+
+  <div id="empty">
+    <h1>No profiles yet</h1>
+    <p>Create a profile for a Thunderstore game or Minecraft, or paste a code a friend shared.</p>
+    <button class="primary" id="start">Create or import profile</button>
+  </div>
+</div>
+
+<dialog id="newDlg">
+  <form id="newForm">
+    <h2>New profile</h2>
+    <label>Name<input name="name" maxlength="40" placeholder="My modpack"></label>
+    <div class="seg">
+      <label><input type="radio" name="type" value="thunderstore" checked>Thunderstore</label>
+      <label><input type="radio" name="type" value="modrinth">Minecraft</label>
+    </div>
+    <label class="ts">Game<input name="game" list="games" placeholder="Search games…"></label>
+    <datalist id="games"></datalist>
+    <div class="mc row">
+      <label>Version<select name="version" id="vers"></select></label>
+      <label>Loader<select name="loader"><option>fabric</option><option>neoforge</option><option>forge</option><option>quilt</option></select></label>
+    </div>
+    <label>Or paste a friend's share code<textarea name="code" rows="3" placeholder="MM1…"></textarea></label>
+    <menu><button type="button" id="cancel">Cancel</button><button class="primary" id="createBtn">Create</button></menu>
+  </form>
+</dialog>
+
+<dialog id="shareDlg">
+  <h2>Share code</h2>
+  <p class="muted">Send this to friends. They paste it in “New profile” to get the exact same mods.</p>
+  <textarea id="code" rows="5" readonly></textarea>
+  <menu><button type="button" id="closeShare">Close</button><button class="primary" id="copy">Copy</button></menu>
+</dialog>
+
+<div id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
