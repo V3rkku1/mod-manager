@@ -6,8 +6,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node test.js",
-    "dist": "electron-builder",
-    "dist:win": "electron-builder --win"
+    "dist": "electron-builder --win"
   },
   "build": {
     "appId": "dev.modmanager.app",
@@ -48,16 +47,6 @@
     },
     "portable": {
       "artifactName": "ModManager-${version}-portable.${ext}"
-    },
-    "mac": {
-      "target": "dmg",
-      "icon": "build/icon.png",
-      "artifactName": "ModManager-${version}.${ext}"
-    },
-    "linux": {
-      "target": "AppImage",
-      "icon": "build/icon.png",
-      "artifactName": "ModManager-${version}.${ext}"
     },
     "publish": {
       "provider": "github",
