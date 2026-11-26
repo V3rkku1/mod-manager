@@ -22,9 +22,9 @@ module.exports = ({ files, settings }) => {
 
     search: async (p, text, page, { sort }) => {
       const filter = { gameDomainName: [{ value: p.game, op: 'EQUALS' }], ...(text ? { name: [{ value: text, op: 'WILDCARD' }] } : {}) }
-      const r = await gql('query($f:ModsFilter,$s:[ModsSort!],$o:Int){mods(filter:$f,sort:$s,count:20,offset:$o){nodes{modId name summary author thumbnailUrl downloads}}}',
+      const r = await gql('query($f:ModsFilter,$s:[ModsSort!],$o:Int){mods(filter:$f,sort:$s,count:20,offset:$o){totalCount nodes{modId name summary author thumbnailUrl downloads}}}',
         { f: filter, s: [{ [SORT[sort] || SORT.popular]: { direction: 'DESC' } }], o: (page - 1) * 20 })
-      return r.mods.nodes.map(m => ({ id: String(m.modId), title: m.name, author: m.author, desc: m.summary, icon: m.thumbnailUrl, downloads: m.downloads }))
+      return { pages: Math.ceil(r.mods.totalCount / 20), items: r.mods.nodes.map(m => ({ id: String(m.modId), title: m.name, author: m.author, desc: m.summary, icon: m.thumbnailUrl, downloads: m.downloads })) }
     },
 
     // nxm = { key, expires } from a "Mod Manager Download" link; without it only Premium accounts get a link.

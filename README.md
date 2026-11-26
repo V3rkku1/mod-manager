@@ -1,6 +1,6 @@
 # Mod Manager
 
-Windows mod manager with a Discord-style UI and one-paste profile sharing. Sources: **Thunderstore**, **Minecraft** (Modrinth mods + modpacks, CurseForge), **CurseForge**, **Nexus Mods**, **GameBanana**.
+Windows mod manager with a Discord-style UI and one-paste profile sharing. Sources: **Thunderstore**, **Terraria** (tModLoader, Steam Workshop), **Minecraft** (Modrinth mods + modpacks, CurseForge), **CurseForge**, **Nexus Mods**, **GameBanana**.
 
 ## Download
 
@@ -30,7 +30,8 @@ Build locally: `npm run dist` (installer needs Windows or Wine; `npx electron-bu
 
 1. **+** → pick a source and a game (or Minecraft version + loader), or **Import** a code / `.mmpack` file.
 2. **Browse** → search, sort, install. Click a mod for its description, screenshots and older versions.
-3. **Installed** → toggle mods on/off, update one or all, remove.
+3. **Installed** → toggle mods on/off (or **Disable all** to play the unmodded game), update one or all, remove.
+   Browse has category chips, sections (Thunderstore) and page numbers.
 4. Target folder: the target icon finds the game in your Steam libraries; the pencil picks it by hand.
 5. **Deploy** copies enabled mods there. **Play** deploys and starts the game (Steam or Minecraft Launcher).
 6. **Share**:
@@ -59,6 +60,10 @@ Microsoft requires every launcher to have its own app ID:
 
 - **CurseForge**: free key from console.curseforge.com.
 - **Nexus Mods**: personal key from Account → API access. Premium accounts download directly; free accounts turn on "Handle Nexus Mod Manager Download buttons" and click that button on the Nexus site.
+
+## Terraria
+
+Terraria profiles use tModLoader mods from the Steam Workshop. The app downloads Valve's steamcmd on first install and fetches mods anonymously into `Documents/My Games/Terraria/tModLoader/Mods`, then writes `enabled.json`. Play starts tModLoader through Steam. Mods enabled outside this profile get turned off on Deploy.
 
 ## Notes
 

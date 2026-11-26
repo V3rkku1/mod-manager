@@ -41,21 +41,22 @@ module.exports = ({ files, settings }) => {
 
   return {
     installPackData,
-    search: async (p, text, page, { kind = 'mod', sort, category, env }) => {
+    search: async (p, text, page, { kind = 'mod', sort, categories = [], env }) => {
       if (kind === 'following') {
         const token = settings().modrinthToken
         if (!token) throw new Error('Add your Modrinth token in Settings to see followed projects')
         const me = await json(`${MR}/user`, { authorization: token })
         const list = await json(`${MR}/user/${me.id}/follows`, { authorization: token })
-        return list.filter(m => !text || m.title.toLowerCase().includes(text.toLowerCase())).slice((page - 1) * 20, page * 20)
-          .map(m => ({ id: m.id, title: m.title, author: '', desc: m.description, icon: m.icon_url, downloads: m.downloads }))
+        const hits = list.filter(m => !text || m.title.toLowerCase().includes(text.toLowerCase()))
+        return { pages: Math.ceil(hits.length / 20), items: hits.slice((page - 1) * 20, page * 20)
+          .map(m => ({ id: m.id, title: m.title, author: '', desc: m.description, icon: m.icon_url, downloads: m.downloads })) }
       }
       const loaderFacet = (kind === 'mod' || kind === 'modpack') && p.mc.loader !== 'vanilla' ? [[`categories:${p.mc.loader}`]] : []
       const envFacet = env === 'client' ? [['client_side:required', 'client_side:optional']] : env === 'server' ? [['server_side:required', 'server_side:optional']] : []
-      const facets = [[`project_type:${kind}`], [`versions:${p.mc.version}`], ...loaderFacet, ...(category ? [[`categories:${category}`]] : []), ...envFacet]
+      const facets = [[`project_type:${kind}`], [`versions:${p.mc.version}`], ...loaderFacet, ...categories.map(c => [`categories:${c}`]), ...envFacet]
       const index = (!sort || sort === 'popular') && text ? 'relevance' : SORT[sort] || SORT.popular
       const r = await json(`${MR}/search?query=${q(text)}&facets=${q(facets)}&index=${index}&limit=20&offset=${(page - 1) * 20}`)
-      return r.hits.map(m => ({ id: m.project_id, title: m.title, author: m.author, desc: m.description, icon: m.icon_url, downloads: m.downloads }))
+      return { pages: Math.ceil(r.total_hits / 20), items: r.hits.map(m => ({ id: m.project_id, title: m.title, author: m.author, desc: m.description, icon: m.icon_url, downloads: m.downloads, tags: m.categories })) }
     },
 
     async install(p, id, vid) {
@@ -90,7 +91,7 @@ module.exports = ({ files, settings }) => {
       }
     },
 
-    categories: async kind => (await json(`${MR}/tag/category`)).filter(c => c.project_type === kind && c.header === 'categories').map(c => c.name).sort(),
+    filters: async (p, kind = 'mod') => ({ categories: (await json(`${MR}/tag/category`)).filter(c => c.project_type === kind && c.header === 'categories').map(c => ({ id: c.name, name: c.name[0].toUpperCase() + c.name.slice(1) })).sort((a, b) => a.name.localeCompare(b.name)) }),
     url: (p, id) => `https://modrinth.com/project/${id}`,
   }
 }

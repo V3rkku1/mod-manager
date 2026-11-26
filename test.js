@@ -2,11 +2,15 @@
 const assert = require('assert'), fs = require('fs'), os = require('os'), path = require('path')
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-'))
 const core = require('./core')(path.join(tmp, 'profiles'))
-const count = dir => fs.readdirSync(path.join(tmp, dir)).length
+const count = dir => fs.existsSync(path.join(tmp, dir)) ? fs.readdirSync(path.join(tmp, dir)).length : 0
 ;(async () => {
   // Thunderstore + configs code (r2modman format)
   const ts = await core.createProfile({ name: 'LC', type: 'thunderstore', game: 'lethal-company', gameName: 'Lethal Company' })
-  assert((await core.search(ts.id, 'thunderstore', 'LateCompany')).length, 'thunderstore search')
+  assert((await core.search(ts.id, 'thunderstore', 'LateCompany')).items.length, 'thunderstore search')
+  const f = await core.filters(ts.id, 'thunderstore')
+  const audio = f.categories.find(c => c.name === 'Audio')
+  const all = await core.search(ts.id, 'thunderstore', ''), aud = await core.search(ts.id, 'thunderstore', '', 2, { categories: [audio.id] })
+  assert(all.pages > aud.pages && aud.pages > 1 && aud.items.every(m => m.tags.includes('Audio')), 'category filter + pages')
   let p = await core.install(ts.id, 'thunderstore', 'notnotnotswipez-MoreCompany')
   assert(p.mods.some(m => m.id === 'BepInEx-BepInExPack'), 'dependency installed')
   assert(fs.existsSync(path.join(tmp, 'profiles', ts.id, 'files/BepInEx/core/BepInEx.dll')), 'pack layout')
@@ -25,7 +29,7 @@ const count = dir => fs.readdirSync(path.join(tmp, dir)).length
 
   // Minecraft / Modrinth
   const mc = await core.createProfile({ name: 'MC', type: 'modrinth', mc: { version: '1.21.1', loader: 'fabric' } })
-  assert((await core.search(mc.id, 'modrinth', 'sodium')).length, 'modrinth search')
+  assert((await core.search(mc.id, 'modrinth', 'sodium')).items.length, 'modrinth search')
   p = await core.install(mc.id, 'modrinth', 'mOgUt4GM') // Mod Menu, requires fabric-api
   assert(p.mods.length >= 2 && p.mods.every(m => m.files[0].startsWith('mods/')), 'modrinth install + deps')
   const code = await core.exportCode(mc.id)
@@ -49,16 +53,19 @@ const count = dir => fs.readdirSync(path.join(tmp, dir)).length
   await core.setDisabled(mc.id, 'mOgUt4GM', true)
   await core.deploy(mc.id)
   assert.strictEqual(count('game/mods'), before - 1, 'disabled mod not deployed')
+  await core.setAllDisabled(mc.id, true); await core.deploy(mc.id)
+  assert.strictEqual(count('game/mods'), 0, 'disable all')
+  await core.setAllDisabled(mc.id, false)
   p = await core.uninstall(mc.id, 'mOgUt4GM')
 
   // Modrinth modpack (small fabric pack)
   const packs = await core.search(mc.id, 'modrinth', '', 1, { kind: 'modpack' })
-  assert(packs.length, 'modpack search')
+  assert(packs.items.length, 'modpack search')
 
   // Nexus: search/details work without a key, install needs one
   const nx = await core.createProfile({ name: 'SDV', type: 'nexus', game: 'stardewvalley', gameId: '1303', gameName: 'Stardew Valley' })
   assert((await core.games('nexus', 'stardew')).some(g => g.id === 'stardewvalley'), 'nexus games')
-  assert((await core.search(nx.id, 'nexus', 'automate')).some(m => m.id === '1063'), 'nexus search')
+  assert((await core.search(nx.id, 'nexus', 'automate')).items.some(m => m.id === '1063'), 'nexus search')
   assert((await core.details(nx.id, 'nexus', '1063')).versions.length, 'nexus details')
   await assert.rejects(core.install(nx.id, 'nexus', '1063'), /API key/)
 
@@ -66,12 +73,23 @@ const count = dir => fs.readdirSync(path.join(tmp, dir)).length
   const gbGame = (await core.games('gamebanana', 'celeste')).find(g => g.name === 'Celeste')
   const gb = await core.createProfile({ name: 'Celeste', type: 'gamebanana', game: gbGame.id, gameName: 'Celeste' })
   const gbMods = await core.search(gb.id, 'gamebanana', '', 1, { sort: 'popular' })
-  assert(gbMods.length, 'gamebanana browse')
-  const small = (await core.search(gb.id, 'gamebanana', 'skin')).find(Boolean)
+  assert(gbMods.items.length && gbMods.pages > 1, 'gamebanana browse')
+  const small = (await core.search(gb.id, 'gamebanana', 'skin')).items[0]
   p = await core.install(gb.id, 'gamebanana', small.id)
   assert(p.mods[0].files.length, 'gamebanana install')
 
   await assert.rejects(core.search(mc.id, 'curseforge', 'jei'), /CurseForge API key/)
+
+  // Terraria: Workshop browse + enabled.json on deploy (download needs steamcmd on Windows)
+  const tr = await core.createProfile({ name: 'T', type: 'terraria', game: 'terraria' })
+  const ws = await core.search(tr.id, 'workshop', '', 1, { categories: ['Quality of Life'] })
+  assert(ws.items.length && ws.pages > 1, 'workshop browse')
+  assert((await core.details(tr.id, 'workshop', ws.items[0].id)).title, 'workshop details')
+  write(path.join(tmp, 'CalamityMod.tmod'), 'x'); write(path.join(tmp, 'Off.tmod'), 'x')
+  await core.addLocal(tr.id, [path.join(tmp, 'CalamityMod.tmod'), path.join(tmp, 'Off.tmod')])
+  await core.setDisabled(tr.id, 'local:Off.tmod', true)
+  await core.updateProfile(tr.id, { target: path.join(tmp, 'tml') }); await core.deploy(tr.id)
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(tmp, 'tml/Mods/enabled.json'))), ['CalamityMod'], 'enabled.json')
   console.log('ok', code.length, 'char code, r2 key', key)
 })().catch(e => { console.error(e); process.exitCode = 1 }).finally(() => fs.rmSync(tmp, { recursive: true, force: true }))
 

@@ -93,14 +93,16 @@
         <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="q" type="search" placeholder="Search mods" autocomplete="off"></div>
         <select id="src"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select>
         <select id="kind"><option value="mod">Mods</option><option value="modpack">Modpacks</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option><option value="following">Following</option></select>
-        <select id="cat" title="Category"><option value="">All categories</option></select>
+        <select id="section" title="Section" hidden></select>
         <select id="env" title="Environment"><option value="">Any side</option><option value="client">Client</option><option value="server">Server</option></select>
-        <select id="sort"><option value="popular">Popular</option><option value="updated">Recently updated</option><option value="newest">Newest</option></select>
+        <select id="sort"><option value="popular">Popular</option><option value="updated">Recently updated</option><option value="newest">Newest</option><option value="rated">Top rated</option></select>
+        <button id="allOff" title="Turn every mod off or on (then Deploy / Play)"><svg class="i"><use href="#i-x"/></svg> Disable all</button>
         <button id="addFiles" title="Add mod files from your computer (or drag and drop)"><svg class="i"><use href="#i-plus"/></svg> Add files</button>
         <input type="file" id="fileInput" multiple hidden>
         <button id="checkUpd"><svg class="i"><use href="#i-refresh"/></svg> Check updates</button>
         <button id="updAll" class="primary" hidden><svg class="i"><use href="#i-up"/></svg> Update all</button>
       </header>
+      <div id="chips" hidden></div>
       <section id="list"></section>
     </main>
 
@@ -125,6 +127,7 @@
       <label><input type="radio" name="type" value="curseforge"><svg class="i"><use href="#i-flame"/></svg>CurseForge</label>
       <label><input type="radio" name="type" value="nexus"><svg class="i"><use href="#i-star"/></svg>Nexus Mods</label>
       <label><input type="radio" name="type" value="gamebanana"><svg class="i"><use href="#i-banana"/></svg>GameBanana</label>
+      <label><input type="radio" name="type" value="terraria"><svg class="i"><use href="#i-globe"/></svg>Terraria</label>
       <label><input type="radio" name="type" value="import"><svg class="i"><use href="#i-import"/></svg>Import</label>
     </div>
     <div class="pick">
@@ -136,6 +139,7 @@
       <label>LOADER<select name="loader"><option>fabric</option><option>neoforge</option><option>forge</option><option>quilt</option><option>vanilla</option></select></label>
     </div>
     <label class="mc check"><input type="checkbox" id="snapshots" class="switch"> Show snapshots</label>
+    <p class="terr muted small">tModLoader mods from the Steam Workshop. Needs tModLoader installed (free on Steam).</p>
     <div class="imp">
       <label>SHARE CODE<textarea name="code" rows="3" placeholder="Paste an MM1… code, or an r2modman profile code"></textarea></label>
       <div class="row"><button type="button" id="importFile"><svg class="i"><use href="#i-file"/></svg> Open .mmpack / .mrpack</button>

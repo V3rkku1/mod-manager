@@ -6,11 +6,12 @@ const LOADER = { forge: 1, fabric: 4, quilt: 5, neoforge: 6 }
 const SORT = { popular: 2, updated: 3, newest: 11 }
 
 module.exports = ({ files, settings }) => {
-  const api = path => {
+  const raw = path => {
     const key = settings().curseforgeKey
     if (!key) throw new Error('Add your CurseForge API key in Settings (gear icon) first')
-    return json(CF + path, { 'x-api-key': key }).then(r => r.data)
+    return json(CF + path, { 'x-api-key': key })
   }
+  const api = path => raw(path).then(r => r.data)
   const isMc = p => p.type === 'modrinth'
   const gameId = p => isMc(p) ? MC : p.game
   const fileFilter = p => isMc(p) ? `&gameVersion=${q(p.mc.version)}&modLoaderType=${LOADER[p.mc.loader] || 0}` : ''
@@ -28,8 +29,9 @@ module.exports = ({ files, settings }) => {
 
     search: async (p, text, page, { kind = 'mod', sort }) => {
       const mc = isMc(p) ? `&classId=${CLASS[kind] || 6}&gameVersion=${q(p.mc.version)}` + (kind === 'mod' ? `&modLoaderType=${LOADER[p.mc.loader]}` : '') : ''
-      const r = await api(`/mods/search?gameId=${gameId(p)}&searchFilter=${q(text)}&sortField=${SORT[sort] || 2}&sortOrder=desc&index=${(page - 1) * 20}&pageSize=20${mc}`)
-      return r.map(m => ({ id: String(m.id), title: m.name, author: m.authors?.[0]?.name, desc: m.summary, icon: m.logo?.thumbnailUrl, downloads: m.downloadCount }))
+      const r = await raw(`/mods/search?gameId=${gameId(p)}&searchFilter=${q(text)}&sortField=${SORT[sort] || 2}&sortOrder=desc&index=${(page - 1) * 20}&pageSize=20${mc}`)
+      // shortcut: CurseForge caps index+pageSize at 10000.
+      return { pages: Math.min(Math.ceil(r.pagination.totalCount / 20), 500), items: r.data.map(m => ({ id: String(m.id), title: m.name, author: m.authors?.[0]?.name, desc: m.summary, icon: m.logo?.thumbnailUrl, downloads: m.downloadCount })) }
     },
 
     async install(p, id, vid) {

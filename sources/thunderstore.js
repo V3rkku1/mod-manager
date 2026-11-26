@@ -3,7 +3,7 @@ const { unzipSync } = require('fflate')
 const TS = 'https://thunderstore.io'
 const split = id => { const i = id.lastIndexOf('-'); return [id.slice(0, i), id.slice(i + 1)] }
 const pkg = id => { const [ns, name] = split(id); return `${TS}/api/experimental/package/${q(ns)}/${q(name)}/` }
-const SORT = { popular: 'most-downloaded', updated: 'last-updated', newest: 'newest' }
+const SORT = { popular: 'most-downloaded', updated: 'last-updated', newest: 'newest', rated: 'top-rated' }
 
 // Map a file in a Thunderstore zip to its place in a BepInEx install (r2modman-style layout).
 // shortcut: assumes BepInEx loader layout; MelonLoader/other-loader games need their own routing.
@@ -21,8 +21,18 @@ module.exports = ({ files }) => ({
     .filter(c => c.is_listed !== false).sort((a, b) => b.total_download_count - a.total_download_count)
     .map(c => ({ id: c.identifier, name: c.name, icon: c.community_icon_url, cover: c.cover_image_url, banner: c.hero_image_url })),
 
-  search: async (p, text, page, { sort }) => (await json(`${TS}/api/cyberstorm/listing/${q(p.game)}/?q=${q(text)}&ordering=${SORT[sort] || SORT.popular}&page=${page}&page_size=20`))
-    .results.map(m => ({ id: `${m.namespace}-${m.name}`, title: m.name.replace(/_/g, ' '), author: m.namespace, desc: m.description, icon: m.icon_url, downloads: m.download_count })),
+  // Sections (Mods, Modpacks, Libraries…) and categories this community uses.
+  filters: async p => {
+    const f = await json(`${TS}/api/cyberstorm/community/${q(p.game)}/filters/`)
+    return { sections: f.sections.map(s => ({ id: s.uuid, name: s.name })), categories: f.package_categories.map(c => ({ id: c.id, name: c.name })) }
+  },
+
+  search: async (p, text, page, { sort, categories = [], section }) => {
+    const cats = categories.filter(c => /^\d+$/.test(c)).map(c => `&included_categories=${c}`).join('')
+    const r = await json(`${TS}/api/cyberstorm/listing/${q(p.game)}/?q=${q(text)}&ordering=${SORT[sort] || SORT.popular}&page=${page}&page_size=20${cats}${section ? `&section=${q(section)}` : ''}`)
+    return { pages: Math.ceil(r.count / 20), items: r.results.map(m => ({ id: `${m.namespace}-${m.name}`, title: m.name.replace(/_/g, ' '), author: m.namespace, desc: m.description, icon: m.icon_url, downloads: m.download_count,
+      tags: m.categories.map(c => c.name) })) }
+  },
 
   async install(p, id, vid) {
     const v = vid ? await json(`${pkg(id)}${q(vid)}/`) : (await json(pkg(id))).latest

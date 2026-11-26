@@ -3,7 +3,8 @@ const $ = s => document.querySelector(s)
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`)
 const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : n ?? ''
 const ic = (name, cls = 'i') => `<svg class="${cls}"><use href="#i-${name}"/></svg>`
-const SRC = { thunderstore: 'Thunderstore', modrinth: 'Modrinth', curseforge: 'CurseForge', nexus: 'Nexus Mods', gamebanana: 'GameBanana' }
+const SRC = { thunderstore: 'Thunderstore', modrinth: 'Modrinth', curseforge: 'CurseForge', nexus: 'Nexus Mods', gamebanana: 'GameBanana', workshop: 'Steam Workshop', terraria: 'tModLoader' }
+const TERRARIA = { name: 'Terraria', icon: 'https://cdn.cloudflare.steamstatic.com/steam/apps/1281930/header.jpg', banner: 'https://cdn.cloudflare.steamstatic.com/steam/apps/1281930/header.jpg' }
 const PICK_TYPES = ['thunderstore', 'curseforge', 'nexus', 'gamebanana']
 let profiles = [], cur = null, tab = 'browse', page = 1, timer, updates = {}, picked = null
 const gameCache = {}
@@ -19,8 +20,9 @@ const run = async fn => {
   try { return await fn() } catch (e) { toast(e.message.replace(/^Error invoking remote method '\w+': (Error: )?/, ''), true) }
 }
 const setProfile = p => { profiles = profiles.map(x => x.id === p.id ? p : x); if (cur?.id === p.id) cur = p }
-const curSrc = () => cur.type === 'modrinth' ? $('#src').value : cur.type
-const srcOf = m => m.src || (cur.type === 'modrinth' ? 'modrinth' : cur.type)
+const defSrc = p => ({ modrinth: 'modrinth', terraria: 'workshop' })[p.type] || p.type
+const curSrc = () => cur.type === 'modrinth' ? $('#src').value : defSrc(cur)
+const srcOf = m => m.src || defSrc(cur)
 const warn = p => p?.warn?.forEach(w => toast(w, true))
 
 async function refresh(id) {
@@ -33,7 +35,7 @@ const avatar = p => p.icon ? `<img src="${esc(p.icon)}" alt="">` : p.type === 'm
 const hours = s => s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m` : `${Math.floor(s / 60)}m`
 const meta = p => (p.type === 'modrinth' ? `Minecraft ${p.mc.version} · ${p.mc.loader}` : `${p.gameName || p.game} · ${SRC[p.type]}`) + (p.playtime ? ` · ${hours(p.playtime)} played` : '')
 const TITLES = { browse: ['Browse', 'compass'], installed: ['Installed', 'package'], worlds: ['Worlds', 'globe'], logs: ['Logs', 'terminal'], options: ['Options', 'sliders'] }
-let running = new Set(), status = {}, catCache = {}
+let running = new Set(), status = {}, filterCache = {}, chips = new Set(), pages = 1
 
 function render() {
   const groups = [...new Set(profiles.map(p => p.group || ''))].sort()
@@ -66,7 +68,7 @@ function render() {
   $('#title').textContent = TITLES[tab][0]
   $('main .hd use').setAttribute('href', '#i-' + TITLES[tab][1])
   ;({ browse: search, installed: showInstalled, worlds: showWorlds, logs: showLogs, options: showOptions })[tab]()
-  if (tab === 'browse') loadCategories()
+
 }
 
 function updateBadges() {
@@ -81,7 +83,7 @@ const installedBtn = `<span class="a">${ic('check')} Installed</span><span class
 const card = (m, src, installed) => `<div class="mod" data-id="${esc(m.id)}" data-src="${src}">
   ${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy">` : '<div class="noicon"></div>'}
   <div class="body"><div class="top"><b>${esc(m.title)}</b>${m.author ? `<small>by ${esc(m.author)}</small>` : ''}
-  ${m.downloads != null ? `<small>${ic('download', 'i sm')} ${fmt(m.downloads)}</small>` : ''}</div><p>${esc(m.desc)}</p></div>
+  ${m.downloads != null ? `<small>${ic('download', 'i sm')} ${fmt(m.downloads)}</small>` : ''}${(m.tags || []).slice(0, 3).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div><p>${esc(m.desc)}</p></div>
   <div class="actions">
     <button class="icon" data-act="link" title="Open mod page">${ic('external')}</button>
     <button class="act ${installed ? 'done' : ''}" data-act="toggle">${installed ? installedBtn : `${ic('download')} Install`}</button>
@@ -104,20 +106,41 @@ const row = m => {
   </div></div>`
 }
 
-async function search(append) {
+async function search(keepPage) {
   const id = cur.id, src = curSrc()
-  if (!append) page = 1, $('#list').innerHTML = '<div class="skel"></div>'.repeat(6)
-  const res = await run(() => api.search(id, src, $('#q').value, page, { kind: $('#kind').value, sort: $('#sort').value, category: $('#cat').value, env: $('#env').value }))
+  if (!keepPage) page = 1
+  $('#list').innerHTML = '<div class="skel"></div>'.repeat(6)
+  loadFilters()
+  const res = await run(() => api.search(id, src, $('#q').value, page, { kind: $('#kind').value, sort: $('#sort').value, categories: [...chips], section: $('#section').value, env: $('#env').value }))
   if (cur?.id !== id || tab !== 'browse') return
-  if (!res) return append || ($('#list').innerHTML = `<div class="hint">${ic('alert')}Couldn't load mods.</div>`)
+  if (!res) return $('#list').innerHTML = `<div class="hint">${ic('alert')}Couldn't load mods.</div>`
   const have = new Set(cur.mods.map(m => m.id))
-  $('#more')?.remove()
-  const html = res.map(m => card(m, src, have.has(m.id))).join('') + (res.length >= 15 ? `<button id="more">Load more</button>` : '')
-  if (append) $('#list').insertAdjacentHTML('beforeend', html)
-  else $('#list').innerHTML = html || `<div class="hint">${ic('search')}No mods found.</div>`
+  pages = Math.max(1, res.pages || 1)
+  $('#list').innerHTML = (res.items.map(m => card(m, src, have.has(m.id))).join('') || `<div class="hint">${ic('search')}No mods found.</div>`) + pager()
+  $('#list').scrollTop = 0
+}
+// Page numbers: first, last, and two around the current page.
+function pager() {
+  if (pages < 2) return ''
+  const nums = [...new Set([1, page - 2, page - 1, page, page + 1, page + 2, pages])].filter(n => n >= 1 && n <= pages).sort((a, b) => a - b)
+  const btn = (n, label = n, cls = '') => `<button data-page="${n}" class="${cls}" ${n < 1 || n > pages ? 'disabled' : ''}>${label}</button>`
+  return `<nav class="pager">${btn(page - 1, '‹')}${nums.map((n, i) => (n - (nums[i - 1] || n) > 1 ? '<span>…</span>' : '') + btn(n, n, n === page ? 'on' : '')).join('')}${btn(page + 1, '›')}
+    <input id="jump" type="number" min="1" max="${pages}" placeholder="Page" title="Jump to page (1–${pages})"></nav>`
+}
+async function loadFilters() {
+  const src = curSrc(), kind = $('#kind').value, key = `${cur.id}:${src}:${kind}`
+  const f = filterCache[key] ??= await api.filters(cur.id, src, kind).catch(() => ({}))
+  if (curSrc() !== src) return
+  $('#chips').innerHTML = (f.categories || []).map(c => `<button class="chip ${chips.has(c.id) ? 'on' : ''}" data-chip="${esc(c.id)}">${esc(c.name)}</button>`).join('')
+  if ((f.categories || []).length > 12) $('#chips').insertAdjacentHTML('beforeend', `<button class="chip more" data-more>${$('#chips').classList.contains('open') ? 'Less' : 'More…'}</button>`)
+  $('#chips').hidden = !f.categories?.length
+  const sec = $('#section'), v = sec.value
+  sec.innerHTML = '<option value="">All sections</option>' + (f.sections || []).map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')
+  sec.value = v; sec.hidden = !f.sections?.length
 }
 
 function showInstalled() {
+  allOffLabel()
   $('#list').innerHTML = cur.mods.map(row).join('')
     || `<div class="hint">${ic('package')}<b>No mods yet</b><span>Find some in Browse.</span></div>`
 }
@@ -148,7 +171,7 @@ $('#rail').onclick = e => {
   const b = e.target.closest('button'); if (!b) return
   if (b.id === 'add') return openNew()
   if (b.id === 'settings') return openSettings()
-  cur = profiles.find(p => p.id === b.dataset.id); tab = 'browse'; $('#q').value = ''; render()
+  cur = profiles.find(p => p.id === b.dataset.id); tab = 'browse'; $('#q').value = ''; chips.clear(); $('#section').value = ''; render()
 }
 $('#tabs').onclick = e => {
   const b = e.target.closest('[data-tab]'); if (!b) return
@@ -156,9 +179,19 @@ $('#tabs').onclick = e => {
   if (tab === 'installed' && !updates[cur.id] && cur.mods.length) checkUpdates(true)
 }
 $('#q').oninput = () => { clearTimeout(timer); timer = setTimeout(() => search(), 300) }
-$('#sort').onchange = $('#cat').onchange = $('#env').onchange = () => search()
-$('#kind').onchange = () => { $('#cat').value = ''; render() }
-$('#src').onchange = () => render()
+$('#sort').onchange = $('#section').onchange = $('#env').onchange = () => search()
+$('#kind').onchange = () => { chips.clear(); render() }
+$('#chips').onclick = e => {
+  if (e.target.closest('[data-more]')) { $('#chips').classList.toggle('open'); e.target.textContent = $('#chips').classList.contains('open') ? 'Less' : 'More…'; return }
+  const c = e.target.closest('[data-chip]')?.dataset.chip; if (!c) return; chips.has(c) ? chips.delete(c) : chips.add(c); search() }
+$('#allOff').onclick = () => run(async () => {
+  const off = cur.mods.some(m => !m.disabled)
+  setProfile(await api.setAllDisabled(cur.id, off)); showInstalled(); allOffLabel()
+  toast(off ? 'All mods disabled — Deploy/Play now runs the game without mods' : 'All mods enabled')
+})
+const allOffLabel = () => { const off = cur.mods.length && cur.mods.every(m => m.disabled); $('#allOff').lastChild.textContent = off ? ' Enable all' : ' Disable all' }
+$('#src').onchange = () => { chips.clear(); render() }
+$('#list').addEventListener('keydown', e => { if (e.target.id === 'jump' && e.key === 'Enter') { const n = Math.min(pages, Math.max(1, +e.target.value || 1)); page = n; search(true) } })
 $('#checkUpd').onclick = () => checkUpdates()
 $('#updAll').onclick = async () => {
   const id = cur.id, ids = Object.keys(updates[id] || {}), b = $('#updAll')
@@ -180,7 +213,7 @@ async function doInstall(src, modId, vid) {
 }
 
 $('#list').onclick = async e => {
-  if (e.target.id === 'more') return page++, search(true)
+  const pg = e.target.closest('[data-page]'); if (pg) return page = +pg.dataset.page, search(true)
   const el = e.target.closest('.mod'); if (!el) return
   const modId = el.dataset.id, src = el.dataset.src
   if (e.target.closest('.body')) return src !== 'local' && openDetails(src, modId)
@@ -221,6 +254,8 @@ const bbcode = s => s
   .replace(/\[center\]/gi, '<div class="center">').replace(/\[\/center\]/gi, '</div>')
   .replace(/\[quote[^\]]*\]/gi, '<blockquote>').replace(/\[\/quote\]/gi, '</blockquote>')
   .replace(/\[code\]/gi, '<pre><code>').replace(/\[\/code\]/gi, '</code></pre>')
+  .replace(/\[(\/?)h([1-3])\]/gi, '<$1h$2>').replace(/\[(\/?)strike\]/gi, '<$1s>').replace(/\[\/?noparse\]/gi, '').replace(/\[hr\]\[\/hr\]|\[hr\]/gi, '<hr>')
+  .replace(/\[olist\]/gi, '<ol>').replace(/\[\/olist\]/gi, '</ol>')
   .replace(/\[list=1\]/gi, '<ol>').replace(/\[list\]/gi, '<ul>').replace(/\[\/list\]/gi, '</ul>')
   .replace(/\[\*\]/g, '<li>').replace(/\[\/\*\]/g, '</li>')
   .replace(/\[spoiler\]/gi, '<details><summary>Spoiler</summary>').replace(/\[\/spoiler\]/gi, '</details>')
@@ -417,6 +452,7 @@ $('#newForm').onsubmit = async e => {
   if (f.type === 'import' && !f.code.trim()) return toast('Paste a share code first', true)
   btn.disabled = true; btn.textContent = f.type === 'import' ? 'Importing mods…' : 'Creating…'
   const res = await run(() => f.type === 'import' ? api.importCode(f.code, name, cur?.type === 'thunderstore' ? cur.game : null)
+    : f.type === 'terraria' ? api.createProfile({ name: name || 'Terraria', type: 'terraria', game: 'terraria', gameName: 'Terraria', icon: TERRARIA.icon, banner: TERRARIA.banner })
     : f.type === 'modrinth' ? api.createProfile({ name: name || `Minecraft ${f.version}`, type: 'modrinth', mc: { version: f.version, loader: f.loader } })
     : api.createProfile({ name: name || picked.name, type: f.type, game: picked.id, gameId: picked.gameId, gameName: picked.name,
       icon: picked.icon || picked.cover, banner: picked.banner || picked.cover }))
@@ -537,13 +573,6 @@ $('#list').addEventListener('submit', async e => {
   const p = await run(() => api.updateProfile(cur.id, { launch: f })); if (p) setProfile(p), toast('Options saved')
 })
 
-async function loadCategories() {
-  if (!document.body.classList.contains('mr')) return
-  const kind = $('#kind').value, list = catCache[kind] ??= await run(() => api.mrCategories(kind)) || []
-  const v = $('#cat').value
-  $('#cat').innerHTML = '<option value="">All categories</option>' + list.map(c => `<option value="${esc(c)}">${esc(c[0].toUpperCase() + c.slice(1))}</option>`).join('')
-  $('#cat').value = v
-}
 
 // Local files: button + drag and drop
 const addPaths = paths => paths.length && run(async () => { const p = await api.addLocal(cur.id, paths); setProfile(p); tab = 'installed'; render(); toast(`Added ${paths.length} file(s)`) })

@@ -12,9 +12,12 @@ module.exports = ({ files }) => {
     games: async text => text?.length > 1 ? (await json(`${GB}/Util/Game/NameMatch?_sName=${q(text)}`))._aRecords
       .map(g => ({ id: String(g._idRow), name: g._sName, icon: g._sIconUrl, cover: g._sBannerUrl, banner: g._sBannerUrl, wide: true })) : [],
 
-    search: async (p, text, page, { sort }) => (text
-      ? await json(`${GB}/Util/Search/Results?_sModelName=Mod&_sOrder=best_match&_idGameRow=${q(p.game)}&_sSearchString=${q(text)}&_nPage=${page}`)
-      : await json(`${GB}/Mod/Index?_nPage=${page}&_nPerpage=20&_aFilters%5BGeneric_Game%5D=${q(p.game)}&_sSort=${SORT[sort] || SORT.popular}`))._aRecords.map(card),
+    search: async (p, text, page, { sort }) => {
+      const r = text
+        ? await json(`${GB}/Util/Search/Results?_sModelName=Mod&_sOrder=best_match&_idGameRow=${q(p.game)}&_sSearchString=${q(text)}&_nPage=${page}`)
+        : await json(`${GB}/Mod/Index?_nPage=${page}&_nPerpage=20&_aFilters%5BGeneric_Game%5D=${q(p.game)}&_sSort=${SORT[sort] || SORT.popular}`)
+      return { pages: Math.ceil(r._aMetadata._nRecordCount / (r._aMetadata._nPerpage || 20)), items: r._aRecords.map(card) }
+    },
 
     async install(p, id, vid) {
       const m = await profile(id)

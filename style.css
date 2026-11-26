@@ -104,7 +104,7 @@ main > header .hd { color: var(--muted); width: 22px; height: 22px; }
 .search input { padding-left: 34px; }
 main > header .search { flex: 1; min-width: 140px; max-width: 320px; }
 main > header select { width: auto; }
-body:not(.mc) #kind, main:not(.browse) .search, main:not(.browse) > header select, main:not(.installed) #checkUpd, main:not(.installed) #updAll, main:not(.installed) #addFiles,
+body:not(.mc) #kind, main:not(.browse) .search, main:not(.browse) > header select, main:not(.installed) #checkUpd, main:not(.installed) #updAll, main:not(.installed) #addFiles, main:not(.installed) #allOff, main:not(.browse) #chips,
 body:not(.mr) #cat, body:not(.mr) #env, body:not(.mc) .mcOnly { display: none !important; }
 #list { flex: 1; overflow-y: auto; padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-content: start; }
 #more { justify-self: center; margin-top: 4px; }
@@ -166,7 +166,7 @@ menu button:not(.primary):hover { text-decoration: underline; background: none; 
 .seg label:hover { background: var(--hover); color: var(--text); }
 .seg input { display: none; }
 .seg label:has(:checked) { background: var(--accent); color: #fff; }
-form:has([value=modrinth]:checked) .pick, form:has([value=import]:checked) .pick, form:not(:has([value=modrinth]:checked)) .mc, form:not(:has([value=import]:checked)) .imp { display: none; }
+form:has([value=modrinth]:checked) .pick, form:has([value=import]:checked) .pick, form:has([value=terraria]:checked) .pick, form:not(:has([value=terraria]:checked)) .terr, form:not(:has([value=modrinth]:checked)) .mc, form:not(:has([value=import]:checked)) .imp { display: none; }
 #games { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; max-height: 300px; overflow-y: auto; margin-top: 10px; padding: 2px; }
 .game { display: grid; gap: 6px; padding: 0; background: none; text-align: center; font-size: 12px; color: var(--text); white-space: normal; }
 .game:hover { background: none; }
@@ -254,7 +254,7 @@ dialog label .codebox { font-weight: 400; }
 .pfp.gear:hover { background: #4e5058; color: #fff; }
 .desc .sz1 { font-size: .75em; } .desc .sz2 { font-size: .875em; } .desc .sz4 { font-size: 1.15em; }
 .desc .sz5 { font-size: 1.35em; font-weight: 700; } .desc .sz6, .desc .sz7 { font-size: 1.6em; font-weight: 700; color: var(--head); }
-.seg { grid-template-columns: repeat(3, 1fr); }
+.seg { grid-template-columns: repeat(4, 1fr); }
 :root[data-theme=light] { --rail: #e3e5e8; --side: #f2f3f5; --main: #ffffff; --card: #f2f3f5; --hover: #e8e9eb; --input: #e3e5e8; --line: #d4d7dc;
   --text: #313338; --head: #060607; --muted: #5c5e66; --foot: #ebedef; color-scheme: light; }
 :root[data-theme=light] #tip, :root[data-theme=light] .toast, :root[data-theme=light] #ctx { background: #fff; color: var(--text); }
@@ -298,3 +298,17 @@ button.stop:hover { background: #a12828; }
 #play { min-width: 0; overflow: hidden; }
 #pplay { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #title { white-space: nowrap; }
+#chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px 0; }
+#chips[hidden] { display: none; }
+.chip { background: var(--card); color: var(--muted); border-radius: 14px; padding: 4px 12px; font-size: 13px; border: 1px solid var(--line); }
+.chip:hover { background: var(--hover); color: var(--text); }
+.chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.pager { display: flex; gap: 4px; justify-content: center; align-items: center; padding: 12px 0 4px; flex-wrap: wrap; }
+.pager button { min-width: 36px; padding: 6px 10px; background: var(--card); color: var(--text); }
+.pager button:hover:not(:disabled) { background: var(--hover); }
+.pager button.on { background: var(--accent); color: #fff; }
+.pager span { color: var(--muted); padding: 0 4px; }
+.pager input { width: 80px; padding: 6px 8px; margin-left: 8px; }
+#chips:not(.open) { max-height: 40px; overflow: hidden; position: relative; padding-right: 90px; }
+#chips .more { position: absolute; right: 16px; top: 10px; background: var(--main); color: var(--accent); }
+#chips.open .more { position: static; }

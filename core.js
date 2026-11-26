@@ -7,11 +7,14 @@ const MC = require('./mc'), auth = require('./auth')
 
 const TS = 'https://thunderstore.io', MR = 'https://api.modrinth.com/v2'
 // Which sites each profile type can install from; first is the default.
-const SOURCES = { thunderstore: ['thunderstore'], modrinth: ['modrinth', 'curseforge'], curseforge: ['curseforge'], nexus: ['nexus'], gamebanana: ['gamebanana'] }
-const ID = { thunderstore: /^[\w.-]+-\w+$/, modrinth: /^\w+$/, curseforge: /^\d+$/, nexus: /^\d+$/, gamebanana: /^\d+$/ }
-const GAME = { thunderstore: /^[\w-]+$/, curseforge: /^\d+$/, nexus: /^\w+$/, gamebanana: /^\d+$/ }
+const SOURCES = { thunderstore: ['thunderstore'], modrinth: ['modrinth', 'curseforge'], curseforge: ['curseforge'], nexus: ['nexus'], gamebanana: ['gamebanana'], terraria: ['workshop'] }
+const ID = { thunderstore: /^[\w.-]+-\w+$/, modrinth: /^\w+$/, curseforge: /^\d+$/, nexus: /^\d+$/, gamebanana: /^\d+$/, workshop: /^\d+$/ }
+const GAME = { thunderstore: /^[\w-]+$/, curseforge: /^\d+$/, nexus: /^\w+$/, gamebanana: /^\d+$/, terraria: /^terraria$/ }
 const VER = /^[\w.+-]+$/
-const CONFIG_DIR = { thunderstore: 'BepInEx/config', modrinth: 'config' }
+const CONFIG_DIR = { thunderstore: 'BepInEx/config', modrinth: 'config', terraria: 'ModConfigs' }
+// tModLoader keeps mods in Documents (or OneDrive Documents) on Windows.
+const tmlDir = () => [path.join(os.homedir(), 'Documents'), path.join(os.homedir(), 'OneDrive', 'Documents')]
+  .map(d => path.join(d, 'My Games', 'Terraria', 'tModLoader')).find(d => fs.existsSync(d))
 const url = s => typeof s === 'string' && (s.startsWith('https://') || (/^data:image\/(png|jpeg|webp);base64,/.test(s) && s.length < 400e3)) ? s : undefined
 const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 
@@ -48,7 +51,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const files = p => path.join(dir(p.id), 'files')
   const load = id => JSON.parse(fs.readFileSync(path.join(dir(id), 'profile.json'), 'utf8'))
   const save = p => (fs.writeFileSync(path.join(dir(p.id), 'profile.json'), JSON.stringify(p, null, 1)), p)
-  const ctx = { files, settings }
+  const ctx = { files, settings, dataDir: path.join(root, '..') }
   const S = Object.fromEntries(Object.keys(ID).map(k => [k, require(`./sources/${k}`)(ctx)]))
   const srcOf = (p, m) => m.src || SOURCES[p.type][0]
   const vidOf = m => m.vid ?? m.version
@@ -62,7 +65,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     fs.mkdirSync(dir(id), { recursive: true })
     return save({ id, name: String(name || 'Profile').slice(0, 40), type, game, gameId: gameId && String(gameId), gameName: gameName && String(gameName).slice(0, 80),
       mc: type === 'modrinth' ? mc : undefined, icon: url(icon), banner: url(banner),
-      target: type === 'modrinth' ? path.join(dir(id), 'minecraft') : '', mods: [], extra: [], deployed: [] })
+      target: type === 'modrinth' ? path.join(dir(id), 'minecraft') : type === 'terraria' ? tmlDir() || '' : '', mods: [], extra: [], deployed: [] })
   }
 
   // Installs a mod (+ required deps) into profile p in place. Returns warnings.
@@ -158,6 +161,8 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       fs.mkdirSync(path.dirname(inside(p.target, f)), { recursive: true })
       fs.copyFileSync(inside(files(p), f), inside(p.target, f))
     }
+    // tModLoader loads only mods listed in Mods/enabled.json.
+    if (p.type === 'terraria') write(p.target, 'Mods/enabled.json', JSON.stringify(p.mods.filter(m => !m.disabled).flatMap(m => m.files).filter(f => f.endsWith('.tmod')).map(f => path.basename(f, '.tmod'))))
     p.extra = [] // shared configs apply once; afterwards the game's own files win
     return save(p)
   }
@@ -167,7 +172,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serial = fn => (...a) => { const r = chain.then(() => fn(...a)); chain = r.catch(() => {}); return r }
   const serialDeploy = id => serial(deployRaw)(id)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
-    'accounts', 'loginStart', 'loginFinish', 'mrCategories', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
+    'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
     listProfiles: () => fs.readdirSync(root).filter(d => fs.existsSync(path.join(root, d, 'profile.json'))).map(load),
@@ -195,6 +200,11 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
 
     install,
     uninstall,
+    setAllDisabled: (pid, disabled) => {
+      const p = load(pid)
+      p.mods.forEach(m => m.disabled = !!disabled || undefined)
+      return save(p)
+    },
     setDisabled: (pid, id, disabled) => {
       const p = load(pid), m = p.mods.find(m => m.id === id)
       if (m) m.disabled = !!disabled
@@ -220,7 +230,8 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
 
     findGame: id => {
       const p = load(id)
-      let found = p.type === 'modrinth' ? fs.existsSync(minecraftDir()) && minecraftDir() : null
+      let found = p.type === 'modrinth' ? fs.existsSync(minecraftDir()) && minecraftDir() : p.type === 'terraria' ? tmlDir() : null
+      if (!found && p.type === 'terraria') throw new Error('tModLoader folder not found — start tModLoader once, or pick Documents/My Games/Terraria/tModLoader')
       if (!found) {
         const games = steamGames(), n = norm(p.gameName || p.game)
         found = (games.find(g => norm(g.name) === n) || games.find(g => norm(g.name).includes(n) || n.includes(norm(g.name))))?.dir
@@ -236,6 +247,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         const exe = ['ProgramFiles(x86)', 'ProgramFiles'].map(k => process.env[k] && path.join(process.env[k], 'Minecraft Launcher', 'MinecraftLauncher.exe')).find(f => f && fs.existsSync(f))
         return exe ? run(exe, []) : run('explorer.exe', ['shell:AppsFolder\\Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft'])
       }
+      if (p.type === 'terraria') return run('explorer.exe', ['steam://rungameid/1281930'])
       const t = path.normalize(p.target || '').toLowerCase()
       const g = t && steamGames().find(g => (t + path.sep).startsWith(g.dir.toLowerCase() + path.sep))
       if (!g) throw new Error('Not a Steam game folder — start the game yourself')
@@ -263,7 +275,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     removeAccount: uuid => (writeAccounts(readAccounts().filter(a => a.uuid !== uuid)), true),
 
     mcVersions: async all => (await mcl.versions()).filter(v => all || v.type === 'release').map(v => v.id),
-    mrCategories: kind => S.modrinth.categories(kind),
+    filters: async (pid, src, kind) => S[src].filters ? S[src].filters(load(pid), kind) : {},
     running: () => Object.keys(running),
     getLog: pid => logs[pid] || [],
     stop: pid => { if (running[pid]) running[pid].stopped = true, running[pid].child.kill(); return true },
@@ -334,6 +346,8 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
             p.mods = p.mods.filter(m => m.id !== r.mod.id); p.mods.push({ ...r.mod, src: 'local' }); continue
           }
           write(files(p), rel, data); out.push(rel)
+        } else if (p.type === 'terraria' && /\.tmod$/i.test(name)) {
+          rel = `Mods/${name}`; write(files(p), rel, data); out.push(rel)
         } else if (p.type === 'thunderstore' && /\.dll$/i.test(name)) {
           rel = `BepInEx/plugins/${name}`; write(files(p), rel, data); out.push(rel)
         } else for (const [r, d] of Object.entries(await require('./lib').extract(name, data))) write(files(p), r, d), out.push(r)
