@@ -1,6 +1,6 @@
 # Mod Manager
 
-Windows mod manager for **Thunderstore** games and **Minecraft** (Modrinth), with a Discord-style UI and one-paste profile sharing.
+Windows mod manager with a Discord-style UI and one-paste profile sharing. Sources: **Thunderstore**, **Minecraft** (Modrinth mods + modpacks, CurseForge), **CurseForge**, **Nexus Mods**, **GameBanana**.
 
 ## Download
 
@@ -28,17 +28,26 @@ Build locally: `npm run dist` (installer needs Windows or Wine; `npx electron-bu
 
 ## Use
 
-1. **+** → pick a game from the cover grid, or Minecraft version + loader, or **Import code**.
-2. **Browse** → search, sort, install. Dependencies install automatically.
+1. **+** → pick a source and a game (or Minecraft version + loader), or **Import** a code / `.mmpack` file.
+2. **Browse** → search, sort, install. Click a mod for its description, screenshots and older versions.
 3. **Installed** → toggle mods on/off, update one or all, remove.
-4. Pencil next to **Target folder** → game install folder, or `.minecraft` / launcher instance folder.
-5. **Deploy mods** → copies enabled mods there. Re-deploying removes what the last deploy added.
-6. **Share** → copy the code and send it. Friends paste it into **Import code** for the exact same mods and versions.
+4. Target folder: the target icon finds the game in your Steam libraries; the pencil picks it by hand.
+5. **Deploy** copies enabled mods there. **Play** deploys and starts the game (Steam or Minecraft Launcher).
+6. **Share**:
+   - *Mod list code* (`MM1…`): short, paste in Discord.
+   - *Code with configs* (Thunderstore): uploads your BepInEx configs; also works in r2modman.
+   - *Save as file* (`.mmpack`): mods + configs, send the file.
+
+## API keys (Settings, gear icon)
+
+- **CurseForge**: free key from console.curseforge.com.
+- **Nexus Mods**: personal key from Account → API access. Premium accounts download directly; free accounts turn on "Handle Nexus Mod Manager Download buttons" and click that button on the Nexus site.
 
 ## Notes
 
 - Thunderstore mods use the BepInEx layout. Games with other loaders aren't handled.
+- CurseForge (non-Minecraft), Nexus and GameBanana mods are unpacked as-is into the target folder: point it at the game's mods folder.
+- Nexus has no dependency info in its API; install requirements yourself.
 - Deploy overwrites same-named files in the target folder.
-- Share codes contain the mod list only, not config files.
 
 `npm test` runs a live check against both APIs.

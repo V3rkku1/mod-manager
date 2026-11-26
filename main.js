@@ -2,22 +2,41 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron')
 const path = require('path')
 const { autoUpdater } = require('electron-updater')
 
+let win
+const nxmArg = argv => argv.find(a => a.startsWith('nxm://'))
+if (!app.requestSingleInstanceLock()) app.quit()
+// Nexus "Mod Manager Download" opens nxm:// links; Windows starts a 2nd instance with the link as an argument.
+app.on('second-instance', (_, argv) => {
+  if (win) win.isMinimized() && win.restore(), win.focus()
+  const link = nxmArg(argv); if (link) win?.webContents.send('nxm', link)
+})
+
 app.whenReady().then(() => {
   const core = require('./core')(path.join(app.getPath('userData'), 'profiles'))
-  for (const [k, fn] of Object.entries(core)) ipcMain.handle(k, (_, ...a) => fn(...a))
+  const nxmProtocol = on => app.isPackaged && (on ? app.setAsDefaultProtocolClient('nxm') : app.removeAsDefaultProtocolClient('nxm'))
+  nxmProtocol(!!core.getSettings().nxmHandler)
+  for (const [k, fn] of Object.entries(core)) ipcMain.handle(k, async (_, ...a) => {
+    try { return await fn(...a) } catch (e) { if (e.open) shell.openExternal(e.open); throw e }
+  })
+  ipcMain.handle('saveSettings', async (_, s) => { const r = await core.setSettings(s); nxmProtocol(!!r.nxmHandler); return r })
   ipcMain.handle('pickFolder', async () => (await dialog.showOpenDialog({ properties: ['openDirectory'] })).filePaths[0])
+  ipcMain.handle('saveFile', async (_, name) => (await dialog.showSaveDialog({ defaultPath: name, filters: [{ name: 'Mod Manager profile', extensions: ['mmpack'] }] })).filePath)
+  ipcMain.handle('openFile', async () => (await dialog.showOpenDialog({ filters: [{ name: 'Mod Manager profile', extensions: ['mmpack'] }] })).filePaths[0])
   ipcMain.handle('openFolder', (_, p) => shell.openPath(p))
-  ipcMain.handle('openExternal', (_, u) => /^https:\/\/(thunderstore\.io|modrinth\.com)\//.test(u) && shell.openExternal(u))
+  ipcMain.handle('openExternal', (_, u) => /^https:\/\//.test(u) && shell.openExternal(u))
   ipcMain.handle('profilesDir', () => path.join(app.getPath('userData'), 'profiles'))
   ipcMain.handle('installUpdate', () => autoUpdater.quitAndInstall())
-  const win = new BrowserWindow({
-    width: 1240, height: 780, minWidth: 900, minHeight: 560, backgroundColor: '#313338', show: true,
+
+  win = new BrowserWindow({
+    width: 1280, height: 800, minWidth: 940, minHeight: 580, backgroundColor: '#313338',
     icon: path.join(__dirname, 'build/icon.png'),
     titleBarStyle: 'hidden', titleBarOverlay: { color: '#1e1f22', symbolColor: '#b5bac1', height: 32 },
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   })
   win.loadFile('index.html')
-  // Checks GitHub Releases, downloads in background, installs on quit. Only the installed (NSIS/AppImage) build can self-update.
+  win.webContents.once('did-finish-load', () => { const l = nxmArg(process.argv); if (l) win.webContents.send('nxm', l) })
+
+  // Checks GitHub Releases, downloads in background, installs on quit. Only the installed (NSIS) build can self-update.
   autoUpdater.on('update-downloaded', i => win.webContents.send('updateReady', i.version))
   const check = () => autoUpdater.checkForUpdates().catch(() => {})
   if (app.isPackaged) check(), setInterval(check, 3600e3)

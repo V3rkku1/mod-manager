@@ -31,6 +31,14 @@
     <symbol id="i-cube" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/></symbol>
     <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"/></symbol>
     <symbol id="i-grass" viewBox="0 0 16 16"><g stroke="none" shape-rendering="crispEdges"><path fill="#5d9b3a" d="M0 0h16v5H0z"/><path fill="#79c05a" d="M0 0h16v3H0zM2 3h2v2H2zM7 3h3v1H7zM12 3h2v3h-2z"/><path fill="#8b5a2b" d="M0 5h16v11H0z"/><path fill="#6e4520" d="M3 8h2v2H3zM9 7h2v2H9zM12 11h2v2h-2zM5 12h2v2H5z"/><path fill="#a06a37" d="M1 10h2v2H1zM7 10h2v1H7zM13 7h2v2h-2z"/></g></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-locate" viewBox="0 0 24 24"><path d="M2 12h3M19 12h3M12 2v3M12 19v3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/></symbol>
+    <symbol id="i-flame" viewBox="0 0 24 24"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></symbol>
+    <symbol id="i-banana" viewBox="0 0 24 24"><path d="M4 13c3.5-2 8-2 10 2a5.5 5.5 0 0 1 8 5"/><path d="M5.15 17.89c5.52-1.52 8.65-6.89 7-12C11.55 4 11.5 2 13 2c3.22 0 5 5.5 5 8 0 6.5-4.2 12-10.49 12C5.11 22 2 22 2 20c0-1.5 1.14-1.55 3.15-2.11Z"/></symbol>
   </defs>
 </svg>
 
@@ -54,11 +62,15 @@
         <div class="target">
           <svg class="i"><use href="#i-folder"/></svg>
           <div><small>TARGET FOLDER</small><div id="target" class="path"></div></div>
-          <button id="pick" class="icon" title="Change target folder"><svg class="i"><use href="#i-pencil"/></svg></button>
+          <button id="find" class="icon" title="Find game folder automatically"><svg class="i"><use href="#i-locate"/></svg></button>
+          <button id="pick" class="icon" title="Choose folder"><svg class="i"><use href="#i-pencil"/></svg></button>
         </div>
-        <button id="deploy" class="primary big"><svg class="i"><use href="#i-send"/></svg> Deploy mods</button>
         <div class="row">
-          <button id="share" title="Share code"><svg class="i"><use href="#i-share"/></svg> Share</button>
+          <button id="deploy" class="primary big" title="Copy mods into the target folder"><svg class="i"><use href="#i-send"/></svg> Deploy</button>
+          <button id="play" class="play big" title="Deploy and start the game"><svg class="i"><use href="#i-play"/></svg> Play</button>
+        </div>
+        <div class="row">
+          <button id="share" title="Share with friends"><svg class="i"><use href="#i-share"/></svg> Share</button>
           <button id="open" class="icon box" title="Open profile files"><svg class="i"><use href="#i-folder"/></svg></button>
           <button id="del" class="icon box danger" title="Delete profile"><svg class="i"><use href="#i-trash"/></svg></button>
         </div>
@@ -69,7 +81,8 @@
       <header>
         <svg class="i hd"><use href="#i-compass"/></svg><b id="title">Browse</b>
         <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="q" type="search" placeholder="Search mods" autocomplete="off"></div>
-        <select id="kind"><option value="mod">Mods</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option></select>
+        <select id="src"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select>
+        <select id="kind"><option value="mod">Mods</option><option value="modpack">Modpacks</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option></select>
         <select id="sort"><option value="popular">Popular</option><option value="updated">Recently updated</option><option value="newest">Newest</option></select>
         <button id="checkUpd"><svg class="i"><use href="#i-refresh"/></svg> Check updates</button>
         <button id="updAll" class="primary" hidden><svg class="i"><use href="#i-up"/></svg> Update all</button>
@@ -80,9 +93,9 @@
     <div id="empty">
       <div class="logo-big"><svg><use href="#i-cube"/></svg></div>
       <h1>Welcome to Mod Manager</h1>
-      <p class="muted">Make a profile for a Thunderstore game or Minecraft, or paste a code a friend shared with you.</p>
+      <p class="muted">Make a profile for any game on Thunderstore, CurseForge, Nexus Mods, GameBanana or Minecraft — or import what a friend shared.</p>
       <div class="row"><button class="primary big" id="start"><svg class="i"><use href="#i-plus"/></svg> New profile</button>
-      <button class="big" id="startImport"><svg class="i"><use href="#i-import"/></svg> Import code</button></div>
+      <button class="big" id="startImport"><svg class="i"><use href="#i-import"/></svg> Import</button></div>
     </div>
   </div>
 </div>
@@ -95,17 +108,23 @@
     <div class="seg">
       <label><input type="radio" name="type" value="thunderstore" checked><svg class="i"><use href="#i-gamepad"/></svg>Thunderstore</label>
       <label><input type="radio" name="type" value="modrinth"><svg class="i"><use href="#i-grass"/></svg>Minecraft</label>
-      <label><input type="radio" name="type" value="import"><svg class="i"><use href="#i-import"/></svg>Import code</label>
+      <label><input type="radio" name="type" value="curseforge"><svg class="i"><use href="#i-flame"/></svg>CurseForge</label>
+      <label><input type="radio" name="type" value="nexus"><svg class="i"><use href="#i-star"/></svg>Nexus Mods</label>
+      <label><input type="radio" name="type" value="gamebanana"><svg class="i"><use href="#i-banana"/></svg>GameBanana</label>
+      <label><input type="radio" name="type" value="import"><svg class="i"><use href="#i-import"/></svg>Import</label>
     </div>
-    <div class="ts">
-      <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="gameQ" type="search" placeholder="Search games"></div>
+    <div class="pick">
+      <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="gameQ" type="search" placeholder="Search games" autocomplete="off"></div>
       <div id="games"></div>
     </div>
     <div class="mc row">
       <label>MINECRAFT VERSION<select name="version" id="vers"></select></label>
       <label>LOADER<select name="loader"><option>fabric</option><option>neoforge</option><option>forge</option><option>quilt</option></select></label>
     </div>
-    <label class="imp">SHARE CODE<textarea name="code" rows="4" placeholder="Paste the MM1… code your friend sent"></textarea></label>
+    <div class="imp">
+      <label>SHARE CODE<textarea name="code" rows="3" placeholder="Paste an MM1… code, or an r2modman profile code"></textarea></label>
+      <button type="button" id="importFile"><svg class="i"><use href="#i-file"/></svg> Open .mmpack file instead</button>
+    </div>
     <label><span>PROFILE NAME <span class="muted">(optional)</span></span><input name="name" maxlength="40" placeholder="My modpack"></label>
     <menu><button type="button" data-close>Cancel</button><button class="primary" id="createBtn">Create</button></menu>
   </form>
@@ -114,12 +133,36 @@
 <dialog id="shareDlg">
   <button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
   <h2>Share with friends</h2>
-  <p class="muted center">They paste this in <b>Import code</b> and get the exact same mods and versions.</p>
-  <div class="codebox"><input id="code" readonly><button class="primary" id="copy"><svg class="i"><use href="#i-copy"/></svg> Copy</button></div>
+  <p class="muted center">Friends paste a code in <b>Import</b>, or open the file.</p>
+  <label>MOD LIST CODE<div class="codebox"><input id="code" readonly><button class="primary" data-copy="code"><svg class="i"><use href="#i-copy"/></svg> Copy</button></div></label>
+  <label class="tsOnly">CODE WITH CONFIGS <span class="muted">(also works in r2modman)</span>
+    <div class="codebox"><input id="r2code" readonly placeholder="Uploads your config files to Thunderstore"><button id="makeR2"><svg class="i"><use href="#i-up"/></svg> Create</button><button class="primary" data-copy="r2code" hidden><svg class="i"><use href="#i-copy"/></svg> Copy</button></div></label>
+  <button id="saveFile"><svg class="i"><use href="#i-file"/></svg> Save as file (mods + configs)</button>
+</dialog>
+
+<dialog id="settingsDlg">
+  <form id="settingsForm">
+    <button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
+    <h2>Settings</h2>
+    <label>CURSEFORGE API KEY<input name="curseforgeKey" type="password" autocomplete="off" placeholder="Needed for CurseForge mods">
+      <a class="muted small" data-href="https://console.curseforge.com/">Get a free key at console.curseforge.com</a></label>
+    <label>NEXUS MODS API KEY<input name="nexusKey" type="password" autocomplete="off" placeholder="Needed to download from Nexus">
+      <a class="muted small" data-href="https://www.nexusmods.com/users/myaccount?tab=api">Find it under Account → API access</a></label>
+    <label class="check"><input type="checkbox" name="nxmHandler" class="switch"> Handle Nexus “Mod Manager Download” buttons</label>
+    <p class="muted small">Keys are stored only on this computer.</p>
+    <menu><button type="button" data-close>Cancel</button><button class="primary">Save</button></menu>
+  </form>
+</dialog>
+
+<dialog id="detailDlg">
+  <button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
+  <div id="detail"></div>
 </dialog>
 
 <div id="tip" hidden></div>
 <div id="toasts"></div>
+<script src="node_modules/marked/lib/marked.umd.js"></script>
+<script src="node_modules/dompurify/dist/purify.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

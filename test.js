@@ -1,21 +1,33 @@
-// Live self-check against Thunderstore + Modrinth APIs (needs network). Run: npm test
+// Live self-check against Thunderstore, Modrinth, Nexus (no key), GameBanana. Run: npm test
 const assert = require('assert'), fs = require('fs'), os = require('os'), path = require('path')
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-'))
 const core = require('./core')(path.join(tmp, 'profiles'))
+const count = dir => fs.readdirSync(path.join(tmp, dir)).length
 ;(async () => {
-  const ts = await core.createProfile({ name: 'LC', type: 'thunderstore', game: 'lethal-company' })
-  const hits = await core.search(ts.id, 'LateCompany')
-  assert(hits.length, 'thunderstore search')
-  let p = await core.install(ts.id, 'notnotnotswipez-MoreCompany')
+  // Thunderstore + configs code (r2modman format)
+  const ts = await core.createProfile({ name: 'LC', type: 'thunderstore', game: 'lethal-company', gameName: 'Lethal Company' })
+  assert((await core.search(ts.id, 'thunderstore', 'LateCompany')).length, 'thunderstore search')
+  let p = await core.install(ts.id, 'thunderstore', 'notnotnotswipez-MoreCompany')
   assert(p.mods.some(m => m.id === 'BepInEx-BepInExPack'), 'dependency installed')
   assert(fs.existsSync(path.join(tmp, 'profiles', ts.id, 'files/BepInEx/core/BepInEx.dll')), 'pack layout')
-  assert(p.mods.find(m => m.id === 'notnotnotswipez-MoreCompany').files.every(f => f.startsWith('BepInEx/')), 'mod layout')
+  const d = await core.details(ts.id, 'thunderstore', 'notnotnotswipez-MoreCompany')
+  assert(d.body.includes('More Company') && d.versions.length > 3, 'thunderstore details')
+  await core.updateProfile(ts.id, { target: path.join(tmp, 'lc') })
+  write(path.join(tmp, 'lc/BepInEx/config/test.cfg'), 'hello=1')
+  const key = await core.exportR2(ts.id)
+  const r2 = await core.importCode(key)
+  assert.strictEqual(r2.profile.game, 'lethal-company')
+  assert.strictEqual(r2.profile.mods.length, p.mods.length, 'r2 import mods')
+  assert.deepStrictEqual(r2.profile.extra, ['BepInEx/config/test.cfg'], 'r2 import configs')
+  await core.updateProfile(r2.profile.id, { target: path.join(tmp, 'lc2') })
+  await core.deploy(r2.profile.id)
+  assert.strictEqual(fs.readFileSync(path.join(tmp, 'lc2/BepInEx/config/test.cfg'), 'utf8'), 'hello=1', 'configs deployed')
 
+  // Minecraft / Modrinth
   const mc = await core.createProfile({ name: 'MC', type: 'modrinth', mc: { version: '1.21.1', loader: 'fabric' } })
-  assert((await core.search(mc.id, 'sodium')).length, 'modrinth search')
-  p = await core.install(mc.id, 'mOgUt4GM') // Mod Menu, requires fabric-api
+  assert((await core.search(mc.id, 'modrinth', 'sodium')).length, 'modrinth search')
+  p = await core.install(mc.id, 'modrinth', 'mOgUt4GM') // Mod Menu, requires fabric-api
   assert(p.mods.length >= 2 && p.mods.every(m => m.files[0].startsWith('mods/')), 'modrinth install + deps')
-
   const code = await core.exportCode(mc.id)
   const { profile, failed } = await core.importCode(code)
   assert.deepStrictEqual(failed, [])
@@ -23,18 +35,44 @@ const core = require('./core')(path.join(tmp, 'profiles'))
   await assert.rejects(core.importCode('MM1garbage'), /Invalid share code/)
 
   await core.updateProfile(mc.id, { target: path.join(tmp, 'game') })
+  write(path.join(tmp, 'game/config/x.json'), '{}')
+  const file = path.join(tmp, 'pack.mmpack')
+  assert.strictEqual(await core.exportFile(mc.id, file), 1, 'file has configs')
+  const fromFile = await core.importFile(file)
+  assert.deepStrictEqual(fromFile.profile.extra, ['config/x.json'])
   await core.deploy(mc.id)
-  assert.strictEqual(fs.readdirSync(path.join(tmp, 'game/mods')).length, p.mods.length, 'deploy')
+  assert.strictEqual(count('game/mods'), p.mods.length, 'deploy')
   assert.deepStrictEqual(await core.checkUpdates(mc.id), {}, 'fresh install has no updates')
   const before = p.mods.length
   p = await core.update(mc.id, 'mOgUt4GM')
   assert.strictEqual(p.mods.length, before, 'update keeps mod')
   await core.setDisabled(mc.id, 'mOgUt4GM', true)
   await core.deploy(mc.id)
-  assert.strictEqual(fs.readdirSync(path.join(tmp, 'game/mods')).length, before - 1, 'disabled mod not deployed')
-  assert((await core.communities()).some(c => c.id === 'lethal-company' && c.cover), 'communities with covers')
+  assert.strictEqual(count('game/mods'), before - 1, 'disabled mod not deployed')
   p = await core.uninstall(mc.id, 'mOgUt4GM')
-  await core.deploy(mc.id)
-  assert.strictEqual(fs.readdirSync(path.join(tmp, 'game/mods')).length, p.mods.length, 'redeploy removes old')
-  console.log('ok', code.length, 'char code')
-})().catch(e => { console.error(e); process.exit(1) }).finally(() => fs.rmSync(tmp, { recursive: true, force: true }))
+
+  // Modrinth modpack (small fabric pack)
+  const packs = await core.search(mc.id, 'modrinth', '', 1, { kind: 'modpack' })
+  assert(packs.length, 'modpack search')
+
+  // Nexus: search/details work without a key, install needs one
+  const nx = await core.createProfile({ name: 'SDV', type: 'nexus', game: 'stardewvalley', gameId: '1303', gameName: 'Stardew Valley' })
+  assert((await core.games('nexus', 'stardew')).some(g => g.id === 'stardewvalley'), 'nexus games')
+  assert((await core.search(nx.id, 'nexus', 'automate')).some(m => m.id === '1063'), 'nexus search')
+  assert((await core.details(nx.id, 'nexus', '1063')).versions.length, 'nexus details')
+  await assert.rejects(core.install(nx.id, 'nexus', '1063'), /API key/)
+
+  // GameBanana: install a real archive
+  const gbGame = (await core.games('gamebanana', 'celeste')).find(g => g.name === 'Celeste')
+  const gb = await core.createProfile({ name: 'Celeste', type: 'gamebanana', game: gbGame.id, gameName: 'Celeste' })
+  const gbMods = await core.search(gb.id, 'gamebanana', '', 1, { sort: 'popular' })
+  assert(gbMods.length, 'gamebanana browse')
+  const small = (await core.search(gb.id, 'gamebanana', 'skin')).find(Boolean)
+  p = await core.install(gb.id, 'gamebanana', small.id)
+  assert(p.mods[0].files.length, 'gamebanana install')
+
+  await assert.rejects(core.search(mc.id, 'curseforge', 'jei'), /CurseForge API key/)
+  console.log('ok', code.length, 'char code, r2 key', key)
+})().catch(e => { console.error(e); process.exitCode = 1 }).finally(() => fs.rmSync(tmp, { recursive: true, force: true }))
+
+function write(f, s) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s) }

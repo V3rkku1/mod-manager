@@ -1,6 +1,6 @@
 {
   "name": "mod-manager",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Mod manager for Thunderstore games and Minecraft (Modrinth) with shareable profile codes",
   "main": "main.js",
   "scripts": {
@@ -19,6 +19,7 @@
       "*.js",
       "*.html",
       "*.css",
+      "sources/*.js",
       "build/icon.png",
       "!test.js"
     ],
@@ -56,8 +57,11 @@
     }
   },
   "dependencies": {
+    "7z-wasm": "^1.2.0",
+    "dompurify": "^3.5.0",
     "electron-updater": "^6.8.11",
-    "fflate": "^0.8.3"
+    "fflate": "^0.8.3",
+    "marked": "^18.3.0"
   },
   "devDependencies": {
     "electron": "^45.5.0",
