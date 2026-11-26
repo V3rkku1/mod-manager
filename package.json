@@ -1,20 +1,61 @@
 {
   "name": "mod-manager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Mod manager for Thunderstore games and Minecraft (Modrinth) with shareable profile codes",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "test": "node test.js",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win"
   },
   "build": {
     "appId": "dev.modmanager.app",
     "productName": "Mod Manager",
-    "files": ["*.js", "*.html", "*.css", "!test.js"],
-    "win": { "target": "nsis" },
-    "mac": { "target": "dmg" },
-    "linux": { "target": "AppImage" }
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "*.js",
+      "*.html",
+      "*.css",
+      "build/icon.png",
+      "!test.js"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.exe"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icon.png"
+    }
   },
   "dependencies": {
     "fflate": "^0.8.3"
@@ -22,5 +63,6 @@
   "devDependencies": {
     "electron": "^45.5.0",
     "electron-builder": "^26.18.0"
-  }
+  },
+  "author": "Mod Manager"
 }

@@ -7,67 +7,118 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<nav id="rail"></nav>
+<!-- Icon sprite: paths from Lucide (ISC). Skipped: icon font / npm icon package. -->
+<svg class="sprite" aria-hidden="true">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+    <symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16.24 7.76-2.12 6.36-6.36 2.12 2.12-6.36z"/></symbol>
+    <symbol id="i-package" viewBox="0 0 24 24"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></symbol>
+    <symbol id="i-gamepad" viewBox="0 0 24 24"><path d="M6 12h4M8 10v4M15 13h.01M18 11h.01"/><rect x="2" y="6" width="20" height="12" rx="2"/></symbol>
+    <symbol id="i-cube" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/></symbol>
+    <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"/></symbol>
+    <symbol id="i-grass" viewBox="0 0 16 16"><g stroke="none" shape-rendering="crispEdges"><path fill="#5d9b3a" d="M0 0h16v5H0z"/><path fill="#79c05a" d="M0 0h16v3H0zM2 3h2v2H2zM7 3h3v1H7zM12 3h2v3h-2z"/><path fill="#8b5a2b" d="M0 5h16v11H0z"/><path fill="#6e4520" d="M3 8h2v2H3zM9 7h2v2H9zM12 11h2v2h-2zM5 12h2v2H5z"/><path fill="#a06a37" d="M1 10h2v2H1zM7 10h2v1H7zM13 7h2v2h-2z"/></g></symbol>
+  </defs>
+</svg>
 
-<div id="app">
-  <aside id="side">
-    <header><b id="pname"></b><small id="pmeta"></small></header>
-    <div id="tabs">
-      <button data-tab="browse"><span>#</span> browse</button>
-      <button data-tab="installed"><span>#</span> installed <em id="count"></em></button>
+<div id="titlebar"><svg class="logo"><use href="#i-cube"/></svg>Mod Manager</div>
+
+<div id="shell">
+  <nav id="rail"></nav>
+
+  <div id="app">
+    <aside id="side">
+      <header id="banner">
+        <div class="name"><b id="pname"></b><button id="rename" class="icon" title="Rename"><svg class="i"><use href="#i-pencil"/></svg></button></div>
+        <small id="pmeta"></small>
+      </header>
+      <div id="tabs">
+        <button data-tab="browse"><svg class="i"><use href="#i-compass"/></svg> Browse</button>
+        <button data-tab="installed"><svg class="i"><use href="#i-package"/></svg> Installed <em id="count"></em></button>
+      </div>
+      <div id="foot">
+        <div class="target">
+          <svg class="i"><use href="#i-folder"/></svg>
+          <div><small>TARGET FOLDER</small><div id="target" class="path"></div></div>
+          <button id="pick" class="icon" title="Change target folder"><svg class="i"><use href="#i-pencil"/></svg></button>
+        </div>
+        <button id="deploy" class="primary big"><svg class="i"><use href="#i-send"/></svg> Deploy mods</button>
+        <div class="row">
+          <button id="share" title="Share code"><svg class="i"><use href="#i-share"/></svg> Share</button>
+          <button id="open" class="icon box" title="Open profile files"><svg class="i"><use href="#i-folder"/></svg></button>
+          <button id="del" class="icon box danger" title="Delete profile"><svg class="i"><use href="#i-trash"/></svg></button>
+        </div>
+      </div>
+    </aside>
+
+    <main>
+      <header>
+        <svg class="i hd"><use href="#i-compass"/></svg><b id="title">Browse</b>
+        <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="q" type="search" placeholder="Search mods" autocomplete="off"></div>
+        <select id="kind"><option value="mod">Mods</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option></select>
+        <select id="sort"><option value="popular">Popular</option><option value="updated">Recently updated</option><option value="newest">Newest</option></select>
+        <button id="checkUpd"><svg class="i"><use href="#i-refresh"/></svg> Check updates</button>
+        <button id="updAll" class="primary" hidden><svg class="i"><use href="#i-up"/></svg> Update all</button>
+      </header>
+      <section id="list"></section>
+    </main>
+
+    <div id="empty">
+      <div class="logo-big"><svg><use href="#i-cube"/></svg></div>
+      <h1>Welcome to Mod Manager</h1>
+      <p class="muted">Make a profile for a Thunderstore game or Minecraft, or paste a code a friend shared with you.</p>
+      <div class="row"><button class="primary big" id="start"><svg class="i"><use href="#i-plus"/></svg> New profile</button>
+      <button class="big" id="startImport"><svg class="i"><use href="#i-import"/></svg> Import code</button></div>
     </div>
-    <div id="foot">
-      <small>TARGET FOLDER</small>
-      <div id="target" class="path"></div>
-      <div class="row"><button id="pick">Change</button><button id="open">Open files</button></div>
-      <button id="deploy" class="primary">Deploy to folder</button>
-      <button id="share">Share code</button>
-      <button id="del" class="danger">Delete profile</button>
-    </div>
-  </aside>
-
-  <main>
-    <header>
-      <input id="q" type="search" placeholder="Search mods" autocomplete="off">
-      <select id="kind"><option value="mod">Mods</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option></select>
-    </header>
-    <section id="list"></section>
-  </main>
-
-  <div id="empty">
-    <h1>No profiles yet</h1>
-    <p>Create a profile for a Thunderstore game or Minecraft, or paste a code a friend shared.</p>
-    <button class="primary" id="start">Create or import profile</button>
   </div>
 </div>
 
 <dialog id="newDlg">
   <form id="newForm">
-    <h2>New profile</h2>
-    <label>Name<input name="name" maxlength="40" placeholder="My modpack"></label>
+    <button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
+    <h2>Create a profile</h2>
+    <p class="muted center">Pick where your mods come from.</p>
     <div class="seg">
-      <label><input type="radio" name="type" value="thunderstore" checked>Thunderstore</label>
-      <label><input type="radio" name="type" value="modrinth">Minecraft</label>
+      <label><input type="radio" name="type" value="thunderstore" checked><svg class="i"><use href="#i-gamepad"/></svg>Thunderstore</label>
+      <label><input type="radio" name="type" value="modrinth"><svg class="i"><use href="#i-grass"/></svg>Minecraft</label>
+      <label><input type="radio" name="type" value="import"><svg class="i"><use href="#i-import"/></svg>Import code</label>
     </div>
-    <label class="ts">Game<input name="game" list="games" placeholder="Search games…"></label>
-    <datalist id="games"></datalist>
+    <div class="ts">
+      <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="gameQ" type="search" placeholder="Search games"></div>
+      <div id="games"></div>
+    </div>
     <div class="mc row">
-      <label>Version<select name="version" id="vers"></select></label>
-      <label>Loader<select name="loader"><option>fabric</option><option>neoforge</option><option>forge</option><option>quilt</option></select></label>
+      <label>MINECRAFT VERSION<select name="version" id="vers"></select></label>
+      <label>LOADER<select name="loader"><option>fabric</option><option>neoforge</option><option>forge</option><option>quilt</option></select></label>
     </div>
-    <label>Or paste a friend's share code<textarea name="code" rows="3" placeholder="MM1…"></textarea></label>
-    <menu><button type="button" id="cancel">Cancel</button><button class="primary" id="createBtn">Create</button></menu>
+    <label class="imp">SHARE CODE<textarea name="code" rows="4" placeholder="Paste the MM1… code your friend sent"></textarea></label>
+    <label><span>PROFILE NAME <span class="muted">(optional)</span></span><input name="name" maxlength="40" placeholder="My modpack"></label>
+    <menu><button type="button" data-close>Cancel</button><button class="primary" id="createBtn">Create</button></menu>
   </form>
 </dialog>
 
 <dialog id="shareDlg">
-  <h2>Share code</h2>
-  <p class="muted">Send this to friends. They paste it in “New profile” to get the exact same mods.</p>
-  <textarea id="code" rows="5" readonly></textarea>
-  <menu><button type="button" id="closeShare">Close</button><button class="primary" id="copy">Copy</button></menu>
+  <button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
+  <h2>Share with friends</h2>
+  <p class="muted center">They paste this in <b>Import code</b> and get the exact same mods and versions.</p>
+  <div class="codebox"><input id="code" readonly><button class="primary" id="copy"><svg class="i"><use href="#i-copy"/></svg> Copy</button></div>
 </dialog>
 
-<div id="toast" hidden></div>
+<div id="tip" hidden></div>
+<div id="toasts"></div>
 <script src="app.js"></script>
 </body>
 </html>

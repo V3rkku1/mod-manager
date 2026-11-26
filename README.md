@@ -1,28 +1,38 @@
 # Mod Manager
 
-Desktop mod manager (Electron) for **Thunderstore** games and **Minecraft** via **Modrinth**, with one-paste profile sharing.
+Desktop mod manager for **Thunderstore** games and **Minecraft** (Modrinth), with a Discord-style UI and one-paste profile sharing.
 
-## Run
+## Download
+
+Every push builds installers in GitHub Actions (Actions → latest "Build" run → Artifacts):
+
+- Windows: `Mod Manager Setup x.y.z.exe` (installer) and `Mod Manager-x.y.z-portable.exe` (no install)
+- macOS: `.dmg`, Linux: `.AppImage`
+
+Push a tag like `v0.2.0` to publish them as a GitHub Release.
+
+## Run from source
 
 ```bash
 npm install
 npm start
 ```
 
-Build an installer to send to friends (`dist/`): `npm run dist`
+Build locally: `npm run dist` (Windows installer needs Windows or Wine; `npx electron-builder --win portable` works anywhere).
 
 ## Use
 
-1. **+** in the left rail → new profile: pick a Thunderstore game (e.g. `lethal-company`) or Minecraft version + loader.
-2. **#browse** → search and install. Dependencies install automatically.
-3. **Change** → set the target folder (game install folder, or `.minecraft` / launcher instance folder).
-4. **Deploy to folder** → copies the profile's mods there. Re-deploying removes what the last deploy added.
-5. **Share code** → copy and send it. Friends paste it into "New profile" to get the exact same mods and versions.
+1. **+** → pick a game from the cover grid, or Minecraft version + loader, or **Import code**.
+2. **Browse** → search, sort, install. Dependencies install automatically.
+3. **Installed** → toggle mods on/off, update one or all, remove.
+4. Pencil next to **Target folder** → game install folder, or `.minecraft` / launcher instance folder.
+5. **Deploy mods** → copies enabled mods there. Re-deploying removes what the last deploy added.
+6. **Share** → copy the code and send it. Friends paste it into **Import code** for the exact same mods and versions.
 
 ## Notes
 
-- Thunderstore mods are laid out for BepInEx (`BepInEx/plugins/<mod>/…`). Games using other loaders aren't handled.
-- Deploy overwrites files with the same name in the target folder.
+- Thunderstore mods use the BepInEx layout. Games with other loaders aren't handled.
+- Deploy overwrites same-named files in the target folder.
 - Share codes contain the mod list only, not config files.
 
 `npm test` runs a live check against both APIs.
