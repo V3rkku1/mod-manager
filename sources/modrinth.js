@@ -7,14 +7,18 @@ const SORT = { popular: 'downloads', updated: 'updated', newest: 'newest' }
 // .mrpack spec only allows these download hosts.
 const PACK_HOSTS = /^https:\/\/(cdn\.modrinth\.com|github\.com|raw\.githubusercontent\.com|gitlab\.com)\//
 
-const filter = (p, type) => `game_versions=${q([p.mc.version])}` + (type === 'mod' || type === 'modpack' ? `&loaders=${q([p.mc.loader])}` : '')
+const filter = (p, type) => `game_versions=${q([p.mc.version])}` + ((type === 'mod' || type === 'modpack') && p.mc.loader !== 'vanilla' ? `&loaders=${q([p.mc.loader])}` : '')
 
-module.exports = ({ files }) => {
+module.exports = ({ files, settings }) => {
   const latest = (p, id, type) => json(`${MR}/project/${q(id)}/version?${filter(p, type)}`).then(r => r[0])
 
   async function installPack(p, proj, v) {
     const f = v.files.find(f => f.primary) || v.files[0]
-    const zip = unzipSync(await bytes(f.url))
+    return installPackData(p, unzipSync(await bytes(f.url)), { id: proj.id, name: proj.title, version: v.version_number, vid: v.id, icon: proj.icon_url })
+  }
+  // Installs an unpacked .mrpack (from Modrinth or a local file) as one mod entry.
+  async function installPackData(p, zip, meta) {
+    if (!zip['modrinth.index.json']) throw new Error('Not a Modrinth modpack (.mrpack)')
     const index = JSON.parse(new TextDecoder().decode(zip['modrinth.index.json']))
     const out = []
     const todo = index.files.filter(f => f.env?.client !== 'unsupported')
@@ -29,15 +33,26 @@ module.exports = ({ files }) => {
     }
     const mc = index.dependencies.minecraft, loader = Object.entries(index.dependencies).find(([k]) => k !== 'minecraft')
     return {
-      mod: { id: proj.id, name: proj.title, version: v.version_number, vid: v.id, icon: proj.icon_url, files: [...new Set(out)], pack: true },
+      mod: { ...meta, name: meta.name || index.name, files: [...new Set(out)], pack: true },
       deps: [],
       warn: `Modpack needs Minecraft ${mc}${loader ? ` with ${loader[0]} ${loader[1]}` : ''} in your launcher`,
     }
   }
 
   return {
-    search: async (p, text, page, { kind = 'mod', sort }) => {
-      const facets = [[`project_type:${kind}`], [`versions:${p.mc.version}`], ...(kind === 'mod' || kind === 'modpack' ? [[`categories:${p.mc.loader}`]] : [])]
+    installPackData,
+    search: async (p, text, page, { kind = 'mod', sort, category, env }) => {
+      if (kind === 'following') {
+        const token = settings().modrinthToken
+        if (!token) throw new Error('Add your Modrinth token in Settings to see followed projects')
+        const me = await json(`${MR}/user`, { authorization: token })
+        const list = await json(`${MR}/user/${me.id}/follows`, { authorization: token })
+        return list.filter(m => !text || m.title.toLowerCase().includes(text.toLowerCase())).slice((page - 1) * 20, page * 20)
+          .map(m => ({ id: m.id, title: m.title, author: '', desc: m.description, icon: m.icon_url, downloads: m.downloads }))
+      }
+      const loaderFacet = (kind === 'mod' || kind === 'modpack') && p.mc.loader !== 'vanilla' ? [[`categories:${p.mc.loader}`]] : []
+      const envFacet = env === 'client' ? [['client_side:required', 'client_side:optional']] : env === 'server' ? [['server_side:required', 'server_side:optional']] : []
+      const facets = [[`project_type:${kind}`], [`versions:${p.mc.version}`], ...loaderFacet, ...(category ? [[`categories:${category}`]] : []), ...envFacet]
       const index = (!sort || sort === 'popular') && text ? 'relevance' : SORT[sort] || SORT.popular
       const r = await json(`${MR}/search?query=${q(text)}&facets=${q(facets)}&index=${index}&limit=20&offset=${(page - 1) * 20}`)
       return r.hits.map(m => ({ id: m.project_id, title: m.title, author: m.author, desc: m.description, icon: m.icon_url, downloads: m.downloads }))
@@ -75,6 +90,7 @@ module.exports = ({ files }) => {
       }
     },
 
+    categories: async kind => (await json(`${MR}/tag/category`)).filter(c => c.project_type === kind && c.header === 'categories').map(c => c.name).sort(),
     url: (p, id) => `https://modrinth.com/project/${id}`,
   }
 }

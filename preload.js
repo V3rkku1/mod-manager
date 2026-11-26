@@ -1,9 +1,13 @@
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 const names = ['listProfiles', 'createProfile', 'updateProfile', 'deleteProfile', 'getSettings', 'saveSettings',
-  'games', 'mcVersions', 'search', 'details', 'pageUrl', 'install', 'uninstall', 'setDisabled', 'checkUpdates', 'update',
+  'games', 'mcVersions', 'mrCategories', 'search', 'details', 'pageUrl', 'install', 'uninstall', 'setDisabled', 'checkUpdates', 'update',
   'deploy', 'findGame', 'launch', 'exportCode', 'exportR2', 'exportFile', 'importFile', 'importCode', 'handleNxm',
-  'pickFolder', 'saveFile', 'openFile', 'openFolder', 'openExternal', 'profilesDir', 'installUpdate']
+  'accounts', 'loginStart', 'loginFinish', 'setActiveAccount', 'removeAccount', 'running', 'getLog', 'stop', 'play', 'repair',
+  'worlds', 'logFiles', 'readLog', 'addLocal', 'exportMrpack', 'importInstance', 'duplicate', 'unlinkPack',
+  'pickFolder', 'saveFile', 'openFile', 'openFolder', 'openProfileFolder', 'openExternal', 'profilesDir', 'installUpdate']
 contextBridge.exposeInMainWorld('api', Object.fromEntries(names.map(n => [n, (...a) => ipcRenderer.invoke(n, ...a)])))
 contextBridge.exposeInMainWorld('platform', process.platform)
+contextBridge.exposeInMainWorld('filePath', f => webUtils.getPathForFile(f))
 contextBridge.exposeInMainWorld('onUpdateReady', cb => ipcRenderer.on('updateReady', (_, v) => cb(v)))
 contextBridge.exposeInMainWorld('onNxm', cb => ipcRenderer.on('nxm', (_, l) => cb(l)))
+contextBridge.exposeInMainWorld('onEvent', cb => ipcRenderer.on('event', (_, e, d) => cb(e, d)))

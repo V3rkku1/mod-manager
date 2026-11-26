@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require('electron')
 const path = require('path')
 const { autoUpdater } = require('electron-updater')
 
@@ -12,7 +12,12 @@ app.on('second-instance', (_, argv) => {
 })
 
 app.whenReady().then(() => {
-  const core = require('./core')(path.join(app.getPath('userData'), 'profiles'))
+  const secure = safeStorage.isEncryptionAvailable()
+  const core = require('./core')(path.join(app.getPath('userData'), 'profiles'), {
+    emit: (event, data) => win?.webContents.send('event', event, data),
+    encrypt: s => s && secure ? 'enc:' + safeStorage.encryptString(s).toString('base64') : s,
+    decrypt: s => s?.startsWith('enc:') ? safeStorage.decryptString(Buffer.from(s.slice(4), 'base64')) : s,
+  })
   const nxmProtocol = on => app.isPackaged && (on ? app.setAsDefaultProtocolClient('nxm') : app.removeAsDefaultProtocolClient('nxm'))
   nxmProtocol(!!core.getSettings().nxmHandler)
   for (const [k, fn] of Object.entries(core)) ipcMain.handle(k, async (_, ...a) => {
@@ -20,9 +25,11 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('saveSettings', async (_, s) => { const r = await core.setSettings(s); nxmProtocol(!!r.nxmHandler); return r })
   ipcMain.handle('pickFolder', async () => (await dialog.showOpenDialog({ properties: ['openDirectory'] })).filePaths[0])
-  ipcMain.handle('saveFile', async (_, name) => (await dialog.showSaveDialog({ defaultPath: name, filters: [{ name: 'Mod Manager profile', extensions: ['mmpack'] }] })).filePath)
-  ipcMain.handle('openFile', async () => (await dialog.showOpenDialog({ filters: [{ name: 'Mod Manager profile', extensions: ['mmpack'] }] })).filePaths[0])
+  const FILTERS = { mmpack: 'Mod Manager profile', mrpack: 'Modrinth modpack' }
+  ipcMain.handle('saveFile', async (_, name, ext = 'mmpack') => (await dialog.showSaveDialog({ defaultPath: name, filters: [{ name: FILTERS[ext], extensions: [ext] }] })).filePath)
+  ipcMain.handle('openFile', async (_, exts = ['mmpack']) => (await dialog.showOpenDialog({ filters: [{ name: 'Profile or modpack', extensions: exts }] })).filePaths[0])
   ipcMain.handle('openFolder', (_, p) => shell.openPath(p))
+  ipcMain.handle('openProfileFolder', async (_, id, sub = '') => { const p = (await core.listProfiles()).find(p => p.id === id); return p && shell.openPath(path.join(sub === 'files' ? path.join(app.getPath('userData'), 'profiles', id, 'files') : p.target, sub === 'files' ? '' : sub)) })
   ipcMain.handle('openExternal', (_, u) => /^https:\/\//.test(u) && shell.openExternal(u))
   ipcMain.handle('profilesDir', () => path.join(app.getPath('userData'), 'profiles'))
   ipcMain.handle('installUpdate', () => autoUpdater.quitAndInstall())

@@ -30,10 +30,15 @@ async function refresh(id) {
 }
 
 const avatar = p => p.icon ? `<img src="${esc(p.icon)}" alt="">` : p.type === 'modrinth' ? ic('grass', '') : esc(p.name.slice(0, 2).toUpperCase())
-const meta = p => p.type === 'modrinth' ? `Minecraft ${p.mc.version} · ${p.mc.loader}` : `${p.gameName || p.game} · ${SRC[p.type]}`
+const hours = s => s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m` : `${Math.floor(s / 60)}m`
+const meta = p => (p.type === 'modrinth' ? `Minecraft ${p.mc.version} · ${p.mc.loader}` : `${p.gameName || p.game} · ${SRC[p.type]}`) + (p.playtime ? ` · ${hours(p.playtime)} played` : '')
+const TITLES = { browse: ['Browse', 'compass'], installed: ['Installed', 'package'], worlds: ['Worlds', 'globe'], logs: ['Logs', 'terminal'], options: ['Options', 'sliders'] }
+let running = new Set(), status = {}, catCache = {}
 
 function render() {
-  $('#rail').innerHTML = profiles.map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''}" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}</button>`).join('')
+  const groups = [...new Set(profiles.map(p => p.group || ''))].sort()
+  $('#rail').innerHTML = groups.map(g => (g ? `<div class="sep"></div><div class="rail-group" title="${esc(g)}">${esc(g)}</div>` : '')
+    + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''}" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}</button>`).join('')).join('')
     + (profiles.length ? '<div class="sep"></div>' : '')
     + `<button class="pfp add" id="add" data-tip="New profile">${ic('plus')}</button>`
     + `<button class="pfp gear" id="settings" data-tip="Settings">${ic('gear')}</button>`
@@ -42,6 +47,10 @@ function render() {
   const mc = cur.type === 'modrinth'
   document.body.classList.toggle('mc', mc)
   document.body.classList.toggle('mc-banner', mc && !cur.banner)
+  document.body.classList.toggle('mr', mc && curSrc() === 'modrinth' && !['following'].includes($('#kind').value))
+  $('#kind option[value=following]').hidden = curSrc() !== 'modrinth'
+  if (!mc && tab !== 'browse' && tab !== 'installed') tab = 'browse'
+  playButton()
   $('#banner').style.backgroundImage = cur.banner ? `url("${encodeURI(cur.banner)}")` : ''
   $('#pname').textContent = cur.name
   $('#pmeta').textContent = meta(cur)
@@ -54,9 +63,10 @@ function render() {
   updateBadges()
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab))
   $('main').className = tab
-  $('#title').textContent = tab === 'browse' ? 'Browse' : 'Installed'
-  $('main .hd use').setAttribute('href', tab === 'browse' ? '#i-compass' : '#i-package')
-  tab === 'browse' ? search() : showInstalled()
+  $('#title').textContent = TITLES[tab][0]
+  $('main .hd use').setAttribute('href', '#i-' + TITLES[tab][1])
+  ;({ browse: search, installed: showInstalled, worlds: showWorlds, logs: showLogs, options: showOptions })[tab]()
+  if (tab === 'browse') loadCategories()
 }
 
 function updateBadges() {
@@ -82,12 +92,13 @@ const row = m => {
   return `<div class="mod ${m.disabled ? 'off' : ''}" data-id="${esc(m.id)}" data-src="${src}">
   ${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy">` : '<div class="noicon"></div>'}
   <div class="body"><div class="top"><b>${esc(m.name)}</b><span class="tag">${esc(m.version)}</span>
-  ${cur.type === 'modrinth' ? `<span class="tag src ${src}">${SRC[src]}</span>` : ''}${m.pack ? '<span class="tag pack">Modpack</span>' : ''}
+  ${src === 'local' ? '<span class="tag">Local file</span>' : cur.type === 'modrinth' ? `<span class="tag src ${src}">${SRC[src]}</span>` : ''}${m.pack ? '<span class="tag pack">Modpack</span>' : ''}
   ${up ? `<span class="tag upd">→ ${esc(up)}</span>` : ''}</div>
   <p>${m.files.length} file${m.files.length === 1 ? '' : 's'}</p></div>
   <div class="actions">
     ${up ? `<button class="upd" data-act="update">${ic('up')} Update</button>` : ''}
-    <button class="icon" data-act="link" title="Open mod page">${ic('external')}</button>
+    ${m.pack && src !== 'local' ? `<button class="icon" data-act="unlink" title="Unlink from modpack (stop pack updates)">${ic('x')}</button>` : ''}
+    ${src === 'local' ? '' : `<button class="icon" data-act="link" title="Open mod page">${ic('external')}</button>`}
     <button class="icon" data-act="remove" title="Remove">${ic('trash')}</button>
     <input type="checkbox" class="switch" data-act="enable" title="Enabled" ${m.disabled ? '' : 'checked'}>
   </div></div>`
@@ -96,7 +107,7 @@ const row = m => {
 async function search(append) {
   const id = cur.id, src = curSrc()
   if (!append) page = 1, $('#list').innerHTML = '<div class="skel"></div>'.repeat(6)
-  const res = await run(() => api.search(id, src, $('#q').value, page, { kind: $('#kind').value, sort: $('#sort').value }))
+  const res = await run(() => api.search(id, src, $('#q').value, page, { kind: $('#kind').value, sort: $('#sort').value, category: $('#cat').value, env: $('#env').value }))
   if (cur?.id !== id || tab !== 'browse') return
   if (!res) return append || ($('#list').innerHTML = `<div class="hint">${ic('alert')}Couldn't load mods.</div>`)
   const have = new Set(cur.mods.map(m => m.id))
@@ -145,7 +156,8 @@ $('#tabs').onclick = e => {
   if (tab === 'installed' && !updates[cur.id] && cur.mods.length) checkUpdates(true)
 }
 $('#q').oninput = () => { clearTimeout(timer); timer = setTimeout(() => search(), 300) }
-$('#kind').onchange = $('#sort').onchange = () => search()
+$('#sort').onchange = $('#cat').onchange = $('#env').onchange = () => search()
+$('#kind').onchange = () => { $('#cat').value = ''; render() }
 $('#src').onchange = () => render()
 $('#checkUpd').onclick = () => checkUpdates()
 $('#updAll').onclick = async () => {
@@ -171,11 +183,12 @@ $('#list').onclick = async e => {
   if (e.target.id === 'more') return page++, search(true)
   const el = e.target.closest('.mod'); if (!el) return
   const modId = el.dataset.id, src = el.dataset.src
-  if (e.target.closest('.body')) return openDetails(src, modId)
+  if (e.target.closest('.body')) return src !== 'local' && openDetails(src, modId)
   const b = e.target.closest('[data-act]')
   if (!b || b.dataset.act === 'enable') return
   const id = cur.id, act = b.dataset.act
   if (act === 'link') return api.openExternal(await api.pageUrl(id, src, modId))
+  if (act === 'unlink') { const p = await run(() => api.unlinkPack(id, modId)); if (p) setProfile(p), showInstalled(); return }
   const remove = act === 'remove' || (act === 'toggle' && b.classList.contains('done'))
   const html = b.innerHTML
   b.disabled = true
@@ -286,7 +299,13 @@ const deploy = async () => {
   const p = await api.deploy(cur.id); setProfile(p); return p
 }
 $('#deploy').onclick = () => run(async () => { const p = await deploy(); toast(`Deployed ${p.deployed.length} files`) })
-$('#play').onclick = () => run(async () => { await deploy(); await api.launch(cur.id); toast('Mods deployed — starting game') })
+$('#play').onclick = () => run(async () => {
+  const id = cur.id
+  if (cur.type !== 'modrinth') { await deploy(); await api.launch(id); return toast('Mods deployed — starting game') }
+  if (running.has(id)) return api.stop(id)
+  status[id] = 'Preparing…'; playButton()
+  try { await api.play(id); running.add(id) } finally { if (!running.has(id)) delete status[id]; playButton() }
+})
 $('#del').onclick = () => confirm(`Delete profile "${cur.name}" and its downloaded mods?\nFiles already deployed stay in the target folder.`)
   && run(async () => { await api.deleteProfile(cur.id); cur = null; await refresh() })
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => b.closest('dialog').close())
@@ -317,13 +336,16 @@ $('#saveFile').onclick = async () => {
 async function openSettings() {
   const s = await api.getSettings(), f = $('#settingsForm')
   f.curseforgeKey.value = s.curseforgeKey || ''; f.nexusKey.value = s.nexusKey || ''; f.nxmHandler.checked = !!s.nxmHandler
+  f.msClientId.value = s.msClientId || ''; f.modrinthToken.value = s.modrinthToken || ''; f.theme.value = s.theme || 'dark'; f.maxMem.value = s.launch?.maxMem || ''
+  $('#login').hidden = true; showAccounts()
   $('#settingsDlg').showModal()
 }
 $('#settingsForm').onsubmit = async e => {
   e.preventDefault()
   const f = e.target
-  if (await run(() => api.saveSettings({ curseforgeKey: f.curseforgeKey.value.trim(), nexusKey: f.nexusKey.value.trim(), nxmHandler: f.nxmHandler.checked })))
-    $('#settingsDlg').close(), toast('Settings saved'), Object.keys(gameCache).forEach(k => delete gameCache[k])
+  if (await run(() => api.saveSettings({ curseforgeKey: f.curseforgeKey.value.trim(), nexusKey: f.nexusKey.value.trim(), nxmHandler: f.nxmHandler.checked,
+    msClientId: f.msClientId.value.trim(), modrinthToken: f.modrinthToken.value.trim(), theme: f.theme.value, launch: { maxMem: f.maxMem.value } })))
+    applyTheme(f.theme.value), $('#settingsDlg').close(), toast('Settings saved'), Object.keys(gameCache).forEach(k => delete gameCache[k])
 }
 
 // New profile dialog
@@ -358,7 +380,7 @@ async function openNew(mode = 'thunderstore') {
   $('#newForm').reset(); picked = null
   $(`[name=type][value=${mode}]`).checked = true
   $('#newDlg').showModal(); showGames()
-  if (!$('#vers').options.length) $('#vers').innerHTML = ((await run(api.mcVersions)) || []).map(v => `<option>${esc(v)}</option>`).join('')
+  if (!$('#vers').options.length) loadVersions()
 }
 $('#start').onclick = () => openNew()
 $('#startImport').onclick = () => openNew('import')
@@ -374,12 +396,19 @@ async function created(res) {
     if (f) setProfile(f), render(), toast(`Found game folder: ${f.target}`)
   }
 }
-$('#importFile').onclick = async () => {
-  const file = await api.openFile(); if (!file) return
-  const btn = $('#importFile'); btn.disabled = true; btn.textContent = 'Importing mods…'
-  const res = await run(() => api.importFile(file, $('#newForm').elements.name.value.trim()))
-  btn.disabled = false; btn.innerHTML = `${ic('file')} Open .mmpack file instead`
+async function importWith(btn, fn) {
+  const html = btn.innerHTML; btn.disabled = true; btn.textContent = 'Importing…'
+  const res = await run(fn)
+  btn.disabled = false; btn.innerHTML = html
   if (res) created(res)
+}
+$('#importFile').onclick = async e => {
+  const file = await api.openFile(['mmpack', 'mrpack']); if (!file) return
+  const name = $('#newForm').elements.name.value.trim()
+  importWith(e.currentTarget, () => file.endsWith('.mrpack') ? api.importInstance(file, name) : api.importFile(file, name))
+}
+$('#importFolder').onclick = async e => {
+  const dir = await api.pickFolder(); if (dir) importWith(e.currentTarget, () => api.importInstance(dir, $('#newForm').elements.name.value.trim()))
 }
 $('#newForm').onsubmit = async e => {
   e.preventDefault()
@@ -407,5 +436,188 @@ window.onNxm?.(link => run(async () => {
   const p = await api.handleNxm(link, cur?.id)
   warn(p); await refresh(p.id); toast(`Installed from Nexus: ${p.mods.at(-1)?.name}`)
 }))
+
+// ---- Minecraft launcher UI ----
+function playButton() {
+  const b = $('#play'), id = cur?.id
+  if (!b || !cur) return
+  const st = status[id], isRun = running.has(id)
+  b.classList.toggle('stop', isRun)
+  b.disabled = !!st && !isRun
+  b.innerHTML = isRun ? `${ic('stop')} Stop` : st ? `${ic('refresh', 'i spin')} <span id="pplay">${esc(st)}</span>` : `${ic('play')} Play`
+}
+window.onEvent?.((e, d) => {
+  if (e === 'status') {
+    if (d.text === null) {
+      running.delete(d.pid); delete status[d.pid]
+      if (d.exit) toast(`Minecraft exited with code ${d.exit} — see Logs`, true)
+      api.listProfiles().then(ps => { ps.forEach(setProfile); if (cur?.id === d.pid) $('#pmeta').textContent = meta(cur) })
+    } else if (d.text === 'Running') running.add(d.pid), delete status[d.pid]
+    else status[d.pid] = d.text
+    if (cur?.id === d.pid) playButton()
+  }
+  if (e === 'log' && cur?.id === d.pid && tab === 'logs' && $('#logsel')?.value === 'live') appendLog(d.line)
+})
+
+const logClass = l => /ERROR|Exception|FATAL/.test(l) ? 'e' : /WARN/.test(l) ? 'w' : ''
+function appendLog(line) {
+  const v = $('#logview'), stick = v.scrollTop + v.clientHeight >= v.scrollHeight - 30
+  const div = document.createElement('div'); div.textContent = line; div.className = logClass(line); v.append(div)
+  if (v.childElementCount > 5000) v.firstChild.remove()
+  if (stick) v.scrollTop = v.scrollHeight
+}
+async function showLogs() {
+  const files = await run(() => api.logFiles(cur.id)) || []
+  $('#list').innerHTML = `<div class="logbar"><select id="logsel"><option value="live">Live game output</option>${files.map(f => `<option value="${esc(f.rel)}">${esc(f.rel)} — ${new Date(f.time).toLocaleString()}</option>`).join('')}</select>
+    <button id="logcopy">${ic('copy')} Copy</button><button id="logdir">${ic('folder')} Folder</button></div><div id="logview"></div>`
+  const load = async () => {
+    const v = $('#logview'); v.textContent = ''
+    const sel = $('#logsel').value
+    const lines = sel === 'live' ? await api.getLog(cur.id) : (await run(() => api.readLog(cur.id, sel)) || '').split(/\r?\n/)
+    v.innerHTML = lines.map(l => `<div class="${logClass(l)}">${esc(l)}</div>`).join('') || '<div>No output yet. Press Play.</div>'
+    v.scrollTop = v.scrollHeight
+  }
+  $('#logsel').onchange = load
+  $('#logcopy').onclick = () => navigator.clipboard.writeText($('#logview').innerText).then(() => toast('Log copied'))
+  $('#logdir').onclick = () => api.openProfileFolder(cur.id, 'logs')
+  load()
+}
+
+async function showWorlds() {
+  const id = cur.id, w = await run(() => api.worlds(id))
+  if (!w || cur.id !== id || tab !== 'worlds') return
+  $('#list').innerHTML = `<div class="section"><h4>SINGLEPLAYER</h4><div class="wgrid">${w.worlds.map(x => `<div class="world">
+      ${x.icon ? `<img src="${x.icon}" alt="">` : '<div class="noicon"></div>'}<div><b>${esc(x.name)}</b><small>${new Date(x.modified).toLocaleDateString()}</small></div>
+      <button data-world="${esc(x.name)}" title="Play this world">${ic('play')}</button></div>`).join('') || '<p class="muted">No worlds yet.</p>'}</div></div>
+    <div class="section"><h4>SERVERS</h4><div class="wgrid">${w.servers.map(x => `<div class="world"><div class="noicon"></div><div><b>${esc(x.name)}</b><small>${esc(x.ip)}</small></div>
+      <button data-server="${esc(x.ip)}" title="Join">${ic('play')}</button></div>`).join('') || '<p class="muted">No servers saved.</p>'}</div>
+    <p class="muted small">Quick join needs Minecraft 1.20+ for worlds.</p></div>
+    <button id="savesdir">${ic('folder')} Open saves folder</button>`
+}
+
+function showOptions() {
+  const o = cur.launch || {}
+  $('#list').innerHTML = `<form class="opts" id="optsForm">
+    <div class="row"><label>MAX MEMORY (MB)<input name="maxMem" type="number" min="512" step="512" value="${o.maxMem || ''}" placeholder="Default"></label>
+      <label>MIN MEMORY (MB)<input name="minMem" type="number" min="256" step="256" value="${o.minMem || ''}" placeholder="512"></label></div>
+    <div class="row"><label>WINDOW WIDTH<input name="width" type="number" value="${o.width || ''}" placeholder="854"></label>
+      <label>WINDOW HEIGHT<input name="height" type="number" value="${o.height || ''}" placeholder="480"></label></div>
+    <label class="check"><input type="checkbox" name="fullscreen" class="switch" ${o.fullscreen ? 'checked' : ''}> Start in fullscreen</label>
+    <label>JAVA EXECUTABLE <span class="muted small">(empty = automatic)</span><input name="java" value="${esc(o.java || '')}" placeholder="Managed by the app"></label>
+    <label>JVM ARGUMENTS<input name="jvmArgs" value="${esc(o.jvmArgs || '')}" placeholder="-XX:+UseG1GC"></label>
+    <label>ENVIRONMENT VARIABLES <span class="muted small">(KEY=value per line)</span><textarea name="env" rows="3">${esc(o.env || '')}</textarea></label>
+    <label>PRE-LAUNCH COMMAND<input name="preLaunch" value="${esc(o.preLaunch || '')}"></label>
+    <label>WRAPPER COMMAND<input name="wrapper" value="${esc(o.wrapper || '')}" placeholder="e.g. gamemoderun"></label>
+    <label>POST-EXIT COMMAND<input name="postExit" value="${esc(o.postExit || '')}"></label>
+    <div class="row"><button class="primary">${ic('check')} Save options</button></div>
+    <h4 class="muted">INSTANCE</h4>
+    <div class="row"><button type="button" id="optRepair">${ic('wrench')} Repair game files</button><button type="button" id="optExport">${ic('file')} Export .mrpack</button>
+      <button type="button" id="optDup">${ic('copy')} Duplicate</button><button type="button" id="optDir">${ic('folder')} Open folder</button></div>
+    <p class="muted small">Loader: ${esc(cur.mc.loader)} ${esc(cur.mc.loaderVersion || '(latest on first launch)')} · Game folder: ${esc(cur.target)}</p></form>`
+}
+
+$('#list').addEventListener('click', async e => {
+  const t = e.target.closest('button'); if (!t) return
+  const id = cur.id
+  if (t.dataset.world || t.dataset.server) {
+    if (running.has(id)) return toast('Already running', true)
+    status[id] = 'Preparing…'; playButton()
+    run(async () => { try { await api.play(id, t.dataset.world ? { world: t.dataset.world } : { server: t.dataset.server }); running.add(id) } finally { if (!running.has(id)) delete status[id]; playButton() } })
+  }
+  if (t.id === 'savesdir') api.openProfileFolder(id, 'saves')
+  if (t.id === 'optRepair') { t.disabled = true; await run(() => api.repair(id)) && toast('Game files repaired'); t.disabled = false }
+  if (t.id === 'optExport') { const f = await api.saveFile(`${cur.name.replace(/[^\w -]/g, '')}.mrpack`, 'mrpack'); if (f) { const n = await run(() => api.exportMrpack(id, f)); if (n != null) toast(`Exported (${n} Modrinth downloads, rest bundled)`) } }
+  if (t.id === 'optDup') { const p = await run(() => api.duplicate(id)); if (p) await refresh(p.id), toast('Duplicated') }
+  if (t.id === 'optDir') api.openProfileFolder(id)
+})
+$('#list').addEventListener('submit', async e => {
+  if (e.target.id !== 'optsForm') return
+  e.preventDefault()
+  const f = Object.fromEntries(new FormData(e.target)); f.fullscreen = e.target.fullscreen.checked
+  const p = await run(() => api.updateProfile(cur.id, { launch: f })); if (p) setProfile(p), toast('Options saved')
+})
+
+async function loadCategories() {
+  if (!document.body.classList.contains('mr')) return
+  const kind = $('#kind').value, list = catCache[kind] ??= await run(() => api.mrCategories(kind)) || []
+  const v = $('#cat').value
+  $('#cat').innerHTML = '<option value="">All categories</option>' + list.map(c => `<option value="${esc(c)}">${esc(c[0].toUpperCase() + c.slice(1))}</option>`).join('')
+  $('#cat').value = v
+}
+
+// Local files: button + drag and drop
+const addPaths = paths => paths.length && run(async () => { const p = await api.addLocal(cur.id, paths); setProfile(p); tab = 'installed'; render(); toast(`Added ${paths.length} file(s)`) })
+$('#addFiles').onclick = () => $('#fileInput').click()
+$('#fileInput').onchange = e => { addPaths([...e.target.files].map(filePath)); e.target.value = '' }
+let dragDepth = 0
+document.addEventListener('dragenter', e => { if (cur && e.dataTransfer.types.includes('Files')) dragDepth++, $('#drop').hidden = false })
+document.addEventListener('dragleave', () => { if (--dragDepth <= 0) dragDepth = 0, $('#drop').hidden = true })
+document.addEventListener('dragover', e => e.preventDefault())
+document.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; $('#drop').hidden = true; if (cur) addPaths([...e.dataTransfer.files].map(filePath)) })
+
+// Rail context menu
+let ctxId = null
+$('#rail').oncontextmenu = e => {
+  const b = e.target.closest('[data-id]'); if (!b) return
+  e.preventDefault(); ctxId = b.dataset.id
+  const m = $('#ctx'); m.hidden = false; m.style.left = e.clientX + 'px'; m.style.top = Math.min(e.clientY, innerHeight - 220) + 'px'
+}
+document.addEventListener('click', e => { if (!e.target.closest('#ctx')) $('#ctx').hidden = true })
+const ask = (title, value = '') => new Promise(res => {
+  const d = $('#askDlg'); $('#askTitle').textContent = title; $('#askInput').value = value
+  $('#askForm').onsubmit = e => { e.preventDefault(); d.close(); res($('#askInput').value) }
+  d.onclose = () => res(null); d.showModal(); $('#askInput').select()
+})
+$('#ctx').onclick = async e => {
+  const a = e.target.closest('[data-ctx]')?.dataset.ctx; if (!a) return
+  $('#ctx').hidden = true
+  const p = profiles.find(p => p.id === ctxId); if (!p) return
+  if (a === 'duplicate') { const d = await run(() => api.duplicate(p.id)); if (d) refresh(d.id) }
+  if (a === 'icon') { $('#iconInput').dataset.id = p.id; $('#iconInput').click() }
+  if (a === 'group') { const g = await ask('Group name (empty = none)', p.group || ''); if (g !== null) { await run(() => api.updateProfile(p.id, { group: g.trim() })); refresh() } }
+  if (a === 'folder') api.openProfileFolder(p.id, p.type === 'modrinth' ? '' : 'files')
+  if (a === 'delete' && confirm(`Delete profile "${p.name}"?`)) { await run(() => api.deleteProfile(p.id)); if (cur?.id === p.id) cur = null; refresh() }
+}
+$('#iconInput').onchange = async e => {
+  const file = e.target.files[0], id = e.target.dataset.id; e.target.value = ''
+  if (!file) return
+  const img = await createImageBitmap(file), c = document.createElement('canvas'); c.width = c.height = 128
+  const s = Math.max(128 / img.width, 128 / img.height)
+  c.getContext('2d').drawImage(img, (128 - img.width * s) / 2, (128 - img.height * s) / 2, img.width * s, img.height * s)
+  const p = await run(() => api.updateProfile(id, { icon: c.toDataURL('image/png') })); if (p) setProfile(p), render()
+}
+
+// Accounts
+async function showAccounts() {
+  const list = await api.accounts()
+  $('#accts').innerHTML = list.map(a => `<div class="acct ${a.active ? 'on' : ''}"><img src="https://mc-heads.net/avatar/${esc(a.uuid)}/32" alt=""><b>${esc(a.name)}</b>
+    ${a.active ? '<span class="tag">Active</span>' : `<button type="button" data-use="${esc(a.uuid)}">Use</button>`}
+    <button type="button" class="icon" data-rm="${esc(a.uuid)}" title="Remove">${ic('trash')}</button></div>`).join('') || '<p class="muted small">No accounts yet.</p>'
+}
+$('#accts').onclick = async e => {
+  const u = e.target.closest('[data-use]')?.dataset.use, r = e.target.closest('[data-rm]')?.dataset.rm
+  if (u) await api.setActiveAccount(u)
+  if (r && confirm('Remove this account?')) await api.removeAccount(r)
+  showAccounts()
+}
+$('#addAcct').onclick = () => run(async () => {
+  const f = $('#settingsForm')
+  if (f.msClientId.value.trim()) await api.saveSettings({ msClientId: f.msClientId.value.trim() })
+  const c = await api.loginStart()
+  $('#login').hidden = false; $('#loginCode').value = c.code; $('#loginUrl').textContent = c.url; $('#loginUrl').dataset.href = c.url
+  api.openExternal(c.url)
+  try { const a = await api.loginFinish(); toast(`Signed in as ${a.name}`); showAccounts() } finally { $('#login').hidden = true }
+})
+$('[data-copy-login]').onclick = () => navigator.clipboard.writeText($('#loginCode').value).then(() => toast('Code copied'))
+
+// Minecraft versions (+ snapshots)
+async function loadVersions() {
+  $('#vers').innerHTML = ((await run(() => api.mcVersions($('#snapshots').checked))) || []).map(v => `<option>${esc(v)}</option>`).join('')
+}
+$('#snapshots').onchange = loadVersions
+
+const applyTheme = t => document.documentElement.dataset.theme = t || 'dark'
+api.getSettings().then(s => applyTheme(s.theme))
+api.running?.().then(r => { running = new Set(r); playButton() })
 
 refresh()

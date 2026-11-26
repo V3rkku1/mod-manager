@@ -1,12 +1,13 @@
 {
   "name": "mod-manager",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Mod manager for Thunderstore games and Minecraft (Modrinth) with shareable profile codes",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "test": "node test.js",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "test:launcher": "node test-launcher.js"
   },
   "build": {
     "appId": "dev.modmanager.app",
@@ -21,7 +22,8 @@
       "*.css",
       "sources/*.js",
       "build/icon.png",
-      "!test.js"
+      "!test.js",
+      "!test-launcher.js"
     ],
     "win": {
       "target": [

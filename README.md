@@ -38,6 +38,23 @@ Build locally: `npm run dist` (installer needs Windows or Wine; `npx electron-bu
    - *Code with configs* (Thunderstore): uploads your BepInEx configs; also works in r2modman.
    - *Save as file* (`.mmpack`): mods + configs, send the file.
 
+## Minecraft launcher
+
+Minecraft profiles launch the game themselves: Vanilla, Fabric, Quilt, Forge, NeoForge, any version incl. snapshots. Java is downloaded automatically (Mojang runtimes).
+
+- Tabs: Browse (Modrinth/CurseForge, categories, client/server filter, Following), Installed (drag and drop local files), Worlds (quick play worlds/servers), Logs (live + old logs, crash reports), Options (memory, Java, JVM args, env vars, window size, fullscreen, pre-launch/wrapper/post-exit hooks, repair, export .mrpack, duplicate).
+- Import: .mrpack files and Prism/MultiMC, CurseForge, ATLauncher, GDLauncher instance folders.
+- Right-click a profile: duplicate, change icon, group, open folder, delete.
+- Play time is tracked per profile.
+
+### Microsoft login
+
+Microsoft requires every launcher to have its own app ID:
+
+1. Register an app at https://portal.azure.com (App registrations, "Personal Microsoft accounts only", enable "Allow public client flows").
+2. Request Minecraft API access for that app ID: https://aka.ms/mce-reviewappid (Mojang approves it; can take days).
+3. Paste the client ID in Settings, then "Add Microsoft account".
+
 ## API keys (Settings, gear icon)
 
 - **CurseForge**: free key from console.curseforge.com.
