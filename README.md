@@ -15,11 +15,7 @@ The installed app checks GitHub Releases on start and every hour, downloads new 
 ## Release a new version
 
 1. Bump `version` in `package.json`.
-2. Commit, then tag and push:
-
-```bash
-git tag v0.4.0 && git push origin v0.4.0
-```
+2. Commit and push, then either push a tag (`git tag v0.4.0 && git push origin v0.4.0`) or run **Actions → Build → Run workflow**.
 
 GitHub Actions builds Windows/macOS/Linux and publishes the release. Everyone on the installer build gets it automatically.
 
