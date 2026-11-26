@@ -244,3 +244,10 @@ $('#newForm').onsubmit = async e => {
 }
 
 refresh()
+
+// App self-update: main process downloads it, we offer a restart.
+window.onUpdateReady?.(v => {
+  const b = $('#updBar'); b.hidden = false
+  b.querySelector('span').textContent = `Update ${v} ready — restart`
+  b.onclick = () => api.installUpdate()
+})

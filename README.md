@@ -4,12 +4,24 @@ Desktop mod manager for **Thunderstore** games and **Minecraft** (Modrinth), wit
 
 ## Download
 
-Every push builds installers in GitHub Actions (Actions → latest "Build" run → Artifacts):
+Get the latest from [Releases](https://github.com/V3rkku1/mod-manager/releases/latest):
 
-- Windows: `Mod Manager Setup x.y.z.exe` (installer) and `Mod Manager-x.y.z-portable.exe` (no install)
-- macOS: `.dmg`, Linux: `.AppImage`
+- Windows: `ModManager-Setup-x.y.z.exe` (recommended, auto-updates) or `ModManager-x.y.z-portable.exe` (no install, no auto-update)
+- Linux: `ModManager-x.y.z.AppImage` (auto-updates)
+- macOS: `ModManager-x.y.z.dmg` (unsigned, no auto-update)
 
-Push a tag like `v0.2.0` to publish them as a GitHub Release.
+The installed app checks GitHub Releases on start and every hour, downloads new versions in the background, and shows a green **Update ready — restart** button in the title bar.
+
+## Release a new version
+
+1. Bump `version` in `package.json`.
+2. Commit, then tag and push:
+
+```bash
+git tag v0.4.0 && git push origin v0.4.0
+```
+
+GitHub Actions builds Windows/macOS/Linux and publishes the release. Everyone on the installer build gets it automatically.
 
 ## Run from source
 

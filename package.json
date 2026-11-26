@@ -1,6 +1,6 @@
 {
   "name": "mod-manager",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Mod manager for Thunderstore games and Minecraft (Modrinth) with shareable profile codes",
   "main": "main.js",
   "scripts": {
@@ -43,26 +43,37 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "artifactName": "ModManager-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "${productName}-${version}-portable.exe"
+      "artifactName": "ModManager-${version}-portable.${ext}"
     },
     "mac": {
       "target": "dmg",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "artifactName": "ModManager-${version}.${ext}"
     },
     "linux": {
       "target": "AppImage",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "artifactName": "ModManager-${version}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "V3rkku1",
+      "repo": "mod-manager",
+      "releaseType": "release"
     }
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "fflate": "^0.8.3"
   },
   "devDependencies": {
     "electron": "^45.5.0",
     "electron-builder": "^26.18.0"
   },
-  "author": "Mod Manager"
+  "author": "Mod Manager",
+  "repository": "github:V3rkku1/mod-manager"
 }
