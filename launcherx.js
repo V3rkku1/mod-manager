@@ -132,7 +132,8 @@ module.exports = (dataDir, emit = () => {}) => {
     const f = path.join(os.tmpdir(), `launcherx-${p.name}-job.ps1`), logDir = path.join(dataDir, 'logs')
     fs.writeFileSync(f, '\ufeff' + script(c, p, steps)); fs.mkdirSync(logDir, { recursive: true })
     const log = fs.createWriteStream(path.join(logDir, `launcherx-${p.name}.log`))
-    const child = spawn(SHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', f], { cwd: os.tmpdir(), windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
+    const child = spawn(SHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', f], { cwd: os.tmpdir(), windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      stdio: ['ignore', 'pipe', 'pipe'] }) // no keyboard: `pause` (VIctory-NVIDIA's Get-NVIDIA-DLSS.cmd ends with one) returns at once instead of waiting forever
     const j = jobs[p.name] = { child, lines: [], steps }
     emit('lxjob', { name: p.name, busy: true, steps })
     let rest = ''

@@ -89,7 +89,9 @@ assert(require('./launcherx')(old).lxConfig().projects[0].run.includes('{args}')
   // Hidden job (what Update + Build / Rebuild / Launch's build run as): output reaches the page, failures say why.
   if (process.platform === 'win32') {
     const ev = [], LX2 = require('./launcherx')(tmp, (e, d) => ev.push([e, d]))
-    p.build = [`Add-Content ${LX.Q(count)} x`, "Write-Host 'hello from build'"]; LX.lxPut(p, 'demo')
+    // `pause` in a .cmd (like Get-NVIDIA-DLSS.cmd) must not hang the hidden build.
+    fs.writeFileSync(path.join(tmp, 'waits.cmd'), '@echo off\r\necho waiting\r\npause\r\n')
+    p.build = [`Add-Content ${LX.Q(count)} x`, "Write-Host 'hello from build'", `& ${LX.Q(path.join(tmp, 'waits.cmd'))}`]; LX.lxPut(p, 'demo')
     assert.equal(await LX2.lxRun('demo', ['build', 'force']), true)
     assert(ev.some(([e, d]) => e === 'lxlog' && d.line.includes('hello from build')) && ev.at(-1)[1].busy === false, 'log streamed')
     LX.lxPut({ ...p, build: ['git not-a-command'] }, 'demo')
