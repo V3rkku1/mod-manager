@@ -744,7 +744,8 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         scale: v => v >= 80 && v <= 130, motion: v => typeof v === 'boolean', descs: v => typeof v === 'boolean', rememberLast: v => typeof v === 'boolean' }
       for (const [k, ok] of Object.entries(LOOK)) if (k in patch && !ok(patch[k])) delete patch[k]
       if ('launcher' in patch && !['official', 'prism', 'multimc', 'custom'].includes(patch.launcher)) delete patch.launcher
-      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'prismPath', 'launcher', 'customCmd', 'autoStart', 'autoUpdate', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
+      if ('updateMode' in patch && !['auto', 'ask', 'manual'].includes(patch.updateMode)) delete patch.updateMode
+      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'prismPath', 'launcher', 'customCmd', 'autoStart', 'autoUpdate', 'updateMode', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
       return setSettingsRaw({ ...Object.fromEntries(pick.map(k => [k, patch[k]])), ...(patch.launch ? { launch: cleanLaunch(patch.launch) } : {}) })
     },
 

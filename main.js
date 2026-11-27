@@ -20,6 +20,7 @@ app.whenReady().then(() => {
     encrypt: s => s && secure ? 'enc:' + safeStorage.encryptString(s).toString('base64') : s,
     decrypt: s => s?.startsWith('enc:') ? safeStorage.decryptString(Buffer.from(s.slice(4), 'base64')) : s,
   })
+  const updateMode = () => { const s = core.getSettings(); return s.updateMode || (s.autoUpdate === false ? 'manual' : 'auto') }
   const nxmProtocol = on => app.isPackaged && (on ? app.setAsDefaultProtocolClient('nxm') : app.removeAsDefaultProtocolClient('nxm'))
   nxmProtocol(!!core.getSettings().nxmHandler)
   // Share links: modmanager://import/<code> and modmanager://follow/<gist id>
@@ -42,9 +43,11 @@ app.whenReady().then(() => {
   ipcMain.handle('titlebar', (_, color, symbolColor) => /^#[0-9a-f]{3,6}$/i.test(color) && /^#[0-9a-f]{3,6}$/i.test(symbolColor) && process.platform !== 'darwin' && win?.setTitleBarOverlay({ color, symbolColor }))
   ipcMain.handle('installUpdate', () => autoUpdater.quitAndInstall())
   ipcMain.handle('appVersion', () => app.getVersion())
+  ipcMain.handle('downloadUpdate', () => autoUpdater.downloadUpdate())
   // Settings > App > Check for updates. A found update downloads in the background and shows the bar when ready.
   ipcMain.handle('checkUpdate', async () => {
     if (!app.isPackaged) return { current: app.getVersion(), dev: true }
+    autoUpdater.autoDownload = updateMode() === 'auto' // ask / manual: the bar offers Download
     const r = await autoUpdater.checkForUpdates()
     return { current: app.getVersion(), latest: r?.updateInfo?.version }
   })
@@ -91,8 +94,10 @@ app.whenReady().then(() => {
   const notes = i => [].concat(i.releaseNotes || []).map(n => n.note ?? n).join('\n') // GitHub release body (HTML)
   autoUpdater.on('download-progress', p => win?.webContents.send('event', 'appUpdate', { percent: Math.round(p.percent) }))
   autoUpdater.on('update-downloaded', i => win?.webContents.send('updateReady', i.version, notes(i)))
-  const check = () => autoUpdater.checkForUpdates().catch(() => {})
-  if (app.isPackaged && core.getSettings().autoUpdate !== false) check(), setInterval(check, 3600e3)
+  autoUpdater.on('update-available', i => !autoUpdater.autoDownload && win?.webContents.send('event', 'appUpdate', { available: i.version }))
+  // Settings > App > Updates: auto (download in the background), ask (check, download on click), manual (only Check for updates).
+  const check = () => { const m = updateMode(); if (m === 'manual') return; autoUpdater.autoDownload = m === 'auto'; autoUpdater.checkForUpdates().catch(() => {}) }
+  if (app.isPackaged) check(), setInterval(check, 3600e3)
 })
 app.on('window-all-closed', () => app.quit())
 // Quitting with servers running (e.g. from the taskbar): stop them cleanly so worlds are saved and synced.

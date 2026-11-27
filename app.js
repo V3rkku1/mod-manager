@@ -512,7 +512,7 @@ const lookFrom = f => ({ theme: f.elements.theme.value || 'midnight', accent: f.
 async function openSettings(section = 'appearance') {
   const s = await api.getSettings(), f = $('#settingsForm'), el = f.elements
   el.curseforgeKey.value = s.curseforgeKey || ''; el.nexusKey.value = s.nexusKey || ''; el.nxmHandler.checked = !!s.nxmHandler
-  el.msClientId.value = s.msClientId || ''; el.prismPath.value = s.prismPath || ''; el.launcher.value = s.launcher || 'official'; el.customCmd.value = s.customCmd || ''; el.autoStart.checked = !!s.autoStart; el.autoUpdate.checked = s.autoUpdate !== false; el.hardlink.checked = s.deployMode === 'hardlink'; el.rememberLast.checked = s.rememberLast !== false
+  el.msClientId.value = s.msClientId || ''; el.prismPath.value = s.prismPath || ''; el.launcher.value = s.launcher || 'official'; el.customCmd.value = s.customCmd || ''; el.autoStart.checked = !!s.autoStart; el.updateMode.value = s.updateMode || (s.autoUpdate === false ? 'manual' : 'auto'); el.hardlink.checked = s.deployMode === 'hardlink'; el.rememberLast.checked = s.rememberLast !== false
   el.githubToken.value = s.githubToken || ''; el.modrinthToken.value = s.modrinthToken || ''; el.maxMem.value = s.launch?.maxMem || ''
   el.theme.value = look.theme; el.density.value = look.density; el.scale.value = look.scale; el.motion.checked = look.motion; el.descs.checked = look.descs
   el.accent.value = look.accent; $('#accentPick').value = look.accent; $('#scaleOut').textContent = look.scale + '%'
@@ -533,7 +533,7 @@ $('#settingsForm').onsubmit = async e => {
   e.preventDefault()
   const f = e.target, el = f.elements, l = lookFrom(f)
   if (await run(() => api.saveSettings({ curseforgeKey: el.curseforgeKey.value.trim(), nexusKey: el.nexusKey.value.trim(), nxmHandler: el.nxmHandler.checked,
-    msClientId: el.msClientId.value.trim(), prismPath: el.prismPath.value.trim(), launcher: el.launcher.value, customCmd: el.customCmd.value.trim(), autoStart: el.autoStart.checked, autoUpdate: el.autoUpdate.checked, deployMode: el.hardlink.checked ? 'hardlink' : 'copy', rememberLast: el.rememberLast.checked,
+    msClientId: el.msClientId.value.trim(), prismPath: el.prismPath.value.trim(), launcher: el.launcher.value, customCmd: el.customCmd.value.trim(), autoStart: el.autoStart.checked, updateMode: el.updateMode.value, deployMode: el.hardlink.checked ? 'hardlink' : 'copy', rememberLast: el.rememberLast.checked,
     githubToken: el.githubToken.value.trim(), modrinthToken: el.modrinthToken.value.trim(), launch: { maxMem: el.maxMem.value }, ...l }))) {
     look = l; lookSaved = true; applyLook(look); $('#settingsDlg').close(); toast('Settings saved'); Object.keys(gameCache).forEach(k => delete gameCache[k]); searchCache.clear()
   }
@@ -640,7 +640,7 @@ $('#newForm').onsubmit = async e => {
 // App self-update: main process downloads it, we offer a restart.
 // Bar in the title bar: download progress, then "Restart to update" + "What's new" (the GitHub release notes, shown as plain text).
 window.onUpdateReady?.((v, notes) => {
-  const b = $('#updBar'); b.hidden = false; b.disabled = false
+  const b = $('#updBar'); b.hidden = false; b.disabled = false; b.dataset.ready = 1
   b.querySelector('span').textContent = `Restart to update to ${v}`
   b.onclick = () => api.installUpdate()
   // Block tags to line breaks, then text only (DOMParser only parses: nothing in the notes runs).
@@ -649,7 +649,12 @@ window.onUpdateReady?.((v, notes) => {
   $('#updNotes').hidden = !text
   $('#updNotes').onclick = () => { $('#notesTitle').textContent = `What's new in ${v}`; $('#notesText').textContent = text; $('#notesDlg').showModal() }
 })
-const appUpdateProgress = d => { const b = $('#updBar'); if (!b.onclick) { b.hidden = false; b.disabled = true; b.querySelector('span').textContent = `Downloading update · ${d.percent}%` } }
+const appUpdateProgress = d => {
+  const b = $('#updBar'); if (b.dataset.ready) return
+  b.hidden = false
+  if (d.available) { b.disabled = false; b.querySelector('span').textContent = `Update ${d.available} available — download`; b.onclick = () => { b.onclick = null; api.downloadUpdate(); appUpdateProgress({ percent: 0 }) }; return }
+  b.disabled = true; b.querySelector('span').textContent = `Downloading update · ${d.percent}%`
+}
 // After an update: say so once.
 api.appVersion?.().then(v => {
   let last; try { last = localStorage.lastVersion; localStorage.lastVersion = v } catch {}
@@ -658,7 +663,7 @@ api.appVersion?.().then(v => {
 }).catch(() => {})
 $('#checkUpd2').onclick = () => run(async () => {
   const r = await api.checkUpdate()
-  toast(r.dev ? 'Updates work in the installed app only' : r.latest && r.latest !== r.current ? `Downloading ${r.latest} — a restart button appears when it's ready` : `You have the latest version (${r.current})`)
+  toast(r.dev ? 'Updates work in the installed app only' : r.latest && r.latest !== r.current ? `Update ${r.latest} found — see the bar at the top` : `You have the latest version (${r.current})`)
 })
 // Nexus "Mod Manager Download" links
 window.onNxm?.(link => run(async () => {
