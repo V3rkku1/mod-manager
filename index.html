@@ -225,7 +225,9 @@
         <label>MICROSOFT CLIENT ID<input name="msClientId" autocomplete="off" placeholder="Azure app ID approved for Minecraft">
           <a class="muted small" data-href="https://help.minecraft.net/hc/en-us/articles/16254801392141">How to get one (Azure app + Minecraft API approval)</a></label>
         <label><span>PLAY WITH <span class="muted">(when no Microsoft account is added above)</span></span><select name="launcher">
-          <option value="official">Official Minecraft Launcher</option><option value="prism">Prism Launcher (background, no window)</option><option value="multimc">MultiMC (background, no window)</option></select></label>
+          <option value="official">Official Minecraft Launcher</option><option value="prism">Prism Launcher (background, no window)</option><option value="multimc">MultiMC (background, no window)</option><option value="custom">My own launcher (custom command)</option></select></label>
+        <label><span>CUSTOM LAUNCHER COMMAND <span class="muted">(for "My own launcher")</span></span><input name="customCmd" autocomplete="off" placeholder='"C:\Games\MyLauncher.exe" --dir "{gameDir}" --version {version} --loader {loader}'>
+          <span class="muted small">Filled in on Play: {gameDir} {version} {loader} {loaderVersion} {name} {memory} {server} {world}. Mods are copied into {gameDir} first.</span></label>
         <label><span>LAUNCHER PATH <span class="muted">(optional, Prism is found automatically)</span></span><input name="prismPath" autocomplete="off" placeholder="Path to prismlauncher.exe or MultiMC.exe">
           <span class="muted small">Add your Microsoft account in Prism or MultiMC once. Forks like PolyMC work with a path here.</span></label>
         <h3>PLAYIT.GG (SERVER TUNNELS)</h3>

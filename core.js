@@ -716,7 +716,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
     'preview', 'checkFollow', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
-    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'watchGame', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'watchGame', 'playCustom', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -743,8 +743,8 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       const LOOK = { theme: v => ['midnight', 'amoled', 'dark', 'light'].includes(v), accent: v => /^#[0-9a-f]{6}$/i.test(v), density: v => ['comfy', 'compact'].includes(v),
         scale: v => v >= 80 && v <= 130, motion: v => typeof v === 'boolean', descs: v => typeof v === 'boolean', rememberLast: v => typeof v === 'boolean' }
       for (const [k, ok] of Object.entries(LOOK)) if (k in patch && !ok(patch[k])) delete patch[k]
-      if ('launcher' in patch && !['official', 'prism', 'multimc'].includes(patch.launcher)) delete patch.launcher
-      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'prismPath', 'launcher', 'autoStart', 'autoUpdate', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
+      if ('launcher' in patch && !['official', 'prism', 'multimc', 'custom'].includes(patch.launcher)) delete patch.launcher
+      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'prismPath', 'launcher', 'customCmd', 'autoStart', 'autoUpdate', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
       return setSettingsRaw({ ...Object.fromEntries(pick.map(k => [k, patch[k]])), ...(patch.launch ? { launch: cleanLaunch(patch.launch) } : {}) })
     },
 
@@ -1262,7 +1262,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     // Setup checklist: what still needs doing for every feature to work.
     setupStatus: async () => {
       const s = settings()
-      return { launcher: s.launcher || 'official', launcherFound: !!findLauncher(s.launcher, s.prismPath), msLogin: readAccounts().length > 0, msClientId: !!s.msClientId, playit: !!playitSecret(),
+      return { launcher: s.launcher || 'official', launcherFound: s.launcher === 'custom' ? !!s.customCmd?.trim() : !!findLauncher(s.launcher, s.prismPath), msLogin: readAccounts().length > 0, msClientId: !!s.msClientId, playit: !!playitSecret(),
         curseforge: !!s.curseforgeKey, nexus: !!s.nexusKey, github: !!s.githubToken, minecraftLauncher: fs.existsSync(path.join(minecraftDir(), 'launcher_profiles.json')) }
     },
 
@@ -1327,6 +1327,35 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     // Play through Prism Launcher or MultiMC (settings.launcher) with no launcher window: it does the Microsoft login, Java and game files.
     // The instance's game folder is a link to this profile's folder, so mods, worlds and configs stay shared.
     watchGame: pid => watchGame(pid, load(pid).target),
+    // Your own launcher: settings.customCmd with {gameDir} {version} {loader} {loaderVersion} {name} {memory} {server} {world} filled in.
+    // If the command returns quickly (it handed off to the game), the game is tracked by its --gameDir like with the official launcher.
+    playCustom: async (pid, quick = {}) => {
+      const cmd = settings().customCmd?.trim()
+      if (!cmd) throw new Error('Set your launcher command in Settings → Accounts')
+      if (running[pid]) throw new Error('Already running')
+      const me = running[pid] = { preparing: true }
+      try {
+        emit('status', { pid, text: 'Preparing…' })
+        const p = await serialDeploy(pid)
+        if (me.stopped) throw new Error('Stopped')
+        const vars = { gameDir: p.target, version: p.mc.version, loader: p.mc.loader, loaderVersion: p.mc.loaderVersion || '', name: p.name,
+          memory: String(p.launch?.maxMem || settings().launch?.maxMem || 4096), server: quick.server || '', world: quick.world || '' }
+        const [exe, ...args] = cmd.match(/"[^"]*"|\S+/g).map(a => a.replace(/^"|"$/g, '').replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? m))
+        const child = me.child = spawn(exe, args, { cwd: p.target, stdio: 'ignore', windowsHide: false })
+        delete me.preparing
+        const start = Date.now()
+        emit('status', { pid, text: 'Running' })
+        child.on('error', e => { if (running[pid] === me) delete running[pid]; emit('status', { pid, text: null }); emit('toast', { text: `Launcher failed: ${e.message}`, error: true }) })
+        child.on('exit', code => {
+          if (running[pid] === me) delete running[pid]
+          const handedOff = Date.now() - start < 15e3 && !me.stopped
+          if (!handedOff) addPlaytime(pid, start)
+          emit('status', { pid, text: null, exit: me.stopped || handedOff ? 0 : code })
+          if (handedOff) watchGame(pid, p.target)
+        })
+        return true
+      } catch (e) { if (running[pid] === me) delete running[pid]; emit('status', { pid, text: null }); throw e }
+    },
     playPrism: async (pid, quick = {}) => {
       const s = settings(), pr = findLauncher(s.launcher, s.prismPath)
       if (!pr) throw new Error(`${s.launcher === 'multimc' ? 'MultiMC' : 'Prism Launcher'} not found. Set its path in Settings → Accounts.`)

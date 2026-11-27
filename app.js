@@ -441,7 +441,9 @@ async function startGame(id, quick = {}) {
   try {
     // No Microsoft account linked: play through the launcher picked in Settings (official Minecraft Launcher by default).
     if (!(await api.accounts()).length) {
-      if (['prism', 'multimc'].includes((await api.getSettings()).launcher)) return await api.playPrism(id, quick)
+      const launcher = (await api.getSettings()).launcher
+      if (launcher === 'custom') return await api.playCustom(id, quick)
+      if (['prism', 'multimc'].includes(launcher)) return await api.playPrism(id, quick)
       const r = await api.playOfficial(id)
       return toast(r.launched ? `Opened Minecraft Launcher — pick "${r.profile}" and press Play${quick.server ? `, then join ${quick.server} under Multiplayer` : ''}. This button turns to Stop once the game runs.` : `Added "${r.profile}" to the Minecraft Launcher`)
     }
@@ -504,7 +506,7 @@ const lookFrom = f => ({ theme: f.elements.theme.value || 'midnight', accent: f.
 async function openSettings(section = 'appearance') {
   const s = await api.getSettings(), f = $('#settingsForm'), el = f.elements
   el.curseforgeKey.value = s.curseforgeKey || ''; el.nexusKey.value = s.nexusKey || ''; el.nxmHandler.checked = !!s.nxmHandler
-  el.msClientId.value = s.msClientId || ''; el.prismPath.value = s.prismPath || ''; el.launcher.value = s.launcher || 'official'; el.autoStart.checked = !!s.autoStart; el.autoUpdate.checked = s.autoUpdate !== false; el.hardlink.checked = s.deployMode === 'hardlink'; el.rememberLast.checked = s.rememberLast !== false
+  el.msClientId.value = s.msClientId || ''; el.prismPath.value = s.prismPath || ''; el.launcher.value = s.launcher || 'official'; el.customCmd.value = s.customCmd || ''; el.autoStart.checked = !!s.autoStart; el.autoUpdate.checked = s.autoUpdate !== false; el.hardlink.checked = s.deployMode === 'hardlink'; el.rememberLast.checked = s.rememberLast !== false
   el.githubToken.value = s.githubToken || ''; el.modrinthToken.value = s.modrinthToken || ''; el.maxMem.value = s.launch?.maxMem || ''
   el.theme.value = look.theme; el.density.value = look.density; el.scale.value = look.scale; el.motion.checked = look.motion; el.descs.checked = look.descs
   el.accent.value = look.accent; $('#accentPick').value = look.accent; $('#scaleOut').textContent = look.scale + '%'
@@ -525,7 +527,7 @@ $('#settingsForm').onsubmit = async e => {
   e.preventDefault()
   const f = e.target, el = f.elements, l = lookFrom(f)
   if (await run(() => api.saveSettings({ curseforgeKey: el.curseforgeKey.value.trim(), nexusKey: el.nexusKey.value.trim(), nxmHandler: el.nxmHandler.checked,
-    msClientId: el.msClientId.value.trim(), prismPath: el.prismPath.value.trim(), launcher: el.launcher.value, autoStart: el.autoStart.checked, autoUpdate: el.autoUpdate.checked, deployMode: el.hardlink.checked ? 'hardlink' : 'copy', rememberLast: el.rememberLast.checked,
+    msClientId: el.msClientId.value.trim(), prismPath: el.prismPath.value.trim(), launcher: el.launcher.value, customCmd: el.customCmd.value.trim(), autoStart: el.autoStart.checked, autoUpdate: el.autoUpdate.checked, deployMode: el.hardlink.checked ? 'hardlink' : 'copy', rememberLast: el.rememberLast.checked,
     githubToken: el.githubToken.value.trim(), modrinthToken: el.modrinthToken.value.trim(), launch: { maxMem: el.maxMem.value }, ...l }))) {
     look = l; lookSaved = true; applyLook(look); $('#settingsDlg').close(); toast('Settings saved'); Object.keys(gameCache).forEach(k => delete gameCache[k]); searchCache.clear()
   }
@@ -668,6 +670,7 @@ window.onEvent?.((e, d) => {
   }
   if (e === 'dl') dlUpdate(d)
   if (e === 'published') toast('Your friends got the updated mod list')
+  if (e === 'toast') toast(d.text, d.error)
   if ((e === 'slog' || e === 'sstatus') && cur?.id === d.pid && tab === 'server') e === 'slog' ? appendTo($('#slog'), d.line) : srvTab !== 'settings' && showServer()
   if (e === 'log' && cur?.id === d.pid && tab === 'logs' && $('#logsel')?.value === 'live') appendLog(d.line)
 })

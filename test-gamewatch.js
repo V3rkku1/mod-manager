@@ -16,5 +16,13 @@ const until = async c => { for (let i = 0; i < 100 && !c(); i++) await new Promi
   await watch
   assert(game.killed || game.exitCode !== null || game.signalCode, 'game stopped')
   assert.deepEqual(await core.running(), [])
-  console.log('ok game watch')
+  // Custom launcher command: placeholders filled in, tracked while it runs.
+  const out = path.join(tmp, 'args.json')
+  await core.setSettings({ launcher: 'custom', customCmd: `"${process.execPath}" -e "require('fs').writeFileSync(process.argv[1], JSON.stringify(process.argv.slice(2))); setTimeout(() => {}, 1500)" ${out} --dir {gameDir} --v {version} {loader} --join {server}` })
+  ev.length = 0
+  await core.playCustom(p.id, { server: 'mc.example.com' })
+  await until(() => ev.at(-1) === null)
+  assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf8')), ['--dir', p.target, '--v', '1.21.1', 'fabric', '--join', 'mc.example.com'])
+  assert.deepEqual(ev, ['Preparing…', 'Running', null])
+  console.log('ok game watch'); process.exit(0) // the hand-off watcher keeps polling otherwise
 })().catch(e => { console.error(e); process.exit(1) })
