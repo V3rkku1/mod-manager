@@ -359,6 +359,24 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     if (!validData(d)) throw new Error('Invalid share code')
     return { d, cfg, rev, owner }
   }
+  const worldBackups = pid => {
+    const d = path.join(dir(pid), 'world-backups')
+    return (fs.existsSync(d) ? fs.readdirSync(d) : []).map(f => f.match(/^(.+)--(\d+)\.zip$/)).filter(Boolean)
+      .map(([file, world, t]) => ({ file, world, time: +t, size: fs.statSync(path.join(d, file)).size })).sort((a, b) => b.time - a.time)
+  }
+  // shortcut: zips in memory (fine for normal worlds up to a few hundred MB), switch to a streaming zip if huge worlds show up.
+  async function worldBackup(pid, name, onlyChanged) {
+    const p = load(pid), saves = path.join(p.target || '', 'saves')
+    if (!fs.existsSync(saves) || !fs.readdirSync(saves).includes(name)) throw new Error('No such world')
+    const src = path.join(saves, name), d = path.join(dir(pid), 'world-backups'), mine = worldBackups(pid).filter(b => b.world === name)
+    const files = walk(src)
+    if (onlyChanged && mine[0] && files.every(f => fs.statSync(path.join(src, f)).mtimeMs <= mine[0].time)) return false
+    fs.mkdirSync(d, { recursive: true })
+    const zip = zipSync(Object.fromEntries(files.filter(f => f !== 'session.lock').map(f => [f, fs.readFileSync(path.join(src, f))])), { level: 1 })
+    fs.writeFileSync(path.join(d, `${name}--${Date.now()}.zip`), zip)
+    for (const old of mine.slice(9)) fs.rmSync(path.join(d, old.file), { force: true })
+    return true
+  }
   const addPlaytime = (pid, start) => serial(id => { const q = load(id); q.playtime = (q.playtime || 0) + Math.round((Date.now() - start) / 1000); q.lastPlayed = Date.now(); save(q) })(pid).catch(() => {})
   // Game started by the official launcher: spot it by its --gameDir (for 15 min after Play), then track it so Play shows Stop.
   const watching = {}, depNames = {}
@@ -729,6 +747,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       if (patch.target) p.target = String(patch.target)
       if ('icon' in patch) p.icon = url(patch.icon)
       if ('group' in patch) p.group = String(patch.group || '').slice(0, 30) || undefined
+      if ('backupWorlds' in patch) p.backupWorlds = !!patch.backupWorlds
       if (patch.launch) p.launch = cleanLaunch(patch.launch)
       return save(p)
     },
@@ -988,7 +1007,8 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       ].map(norm).filter(w => w.length > 2 && !['minecraft', 'fabricloader', 'java', 'forge', 'neoforge', 'mixinextras', 'fabricapi'].includes(w)))
       const suspects = p.mods.filter(m => !m.disabled && [...words].some(w => m.files.some(f => norm(path.basename(f)).includes(w)) || norm(m.name) === w))
       const lines = text.split('\n'), i = lines.findIndex(l => /Description:|Exception|Error:/.test(l))
-      return { file: path.relative(p.target, file), suspects: suspects.map(m => ({ id: m.id, name: m.name })), snippet: lines.slice(Math.max(0, i), i + 8).join('\n') }
+      return { file: path.relative(p.target, file), time: fs.statSync(file).mtimeMs, crash: path.basename(path.dirname(file)) === 'crash-reports',
+        suspects: suspects.map(m => ({ id: m.id, name: m.name })), snippet: lines.slice(Math.max(0, i), i + 8).join('\n') }
     },
 
     // Installed Java runtimes (managed ones + common install folders).
@@ -1436,6 +1456,23 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         return { name: d.name, modified: fs.statSync(w).mtimeMs, icon: fs.existsSync(icon) ? 'data:image/png;base64,' + fs.readFileSync(icon).toString('base64') : null }
       }).sort((a, b) => b.modified - a.modified) : []
       return { worlds, servers: MC.readServers(path.join(p.target || '', 'servers.dat')) }
+    },
+    // World backups: zips in the profile's world-backups folder, the newest 10 per world kept.
+    worldBackups: pid => worldBackups(pid),
+    worldBackup: (pid, name) => worldBackup(pid, name, false),
+    // Before Play (profile option): every world changed since its last backup.
+    backupWorlds: async pid => {
+      const p = load(pid), saves = path.join(p.target || '', 'saves'), done = []
+      for (const w of fs.existsSync(saves) ? fs.readdirSync(saves, { withFileTypes: true }).filter(d => d.isDirectory()) : []) if (await worldBackup(pid, w.name, true)) done.push(w.name)
+      return done
+    },
+    worldRestore: (pid, file) => {
+      const p = load(pid), b = worldBackups(pid).find(x => x.file === file)
+      if (!b) throw new Error('Backup not found')
+      const saves = path.join(p.target, 'saves'), to = inside(saves, b.world)
+      if (fs.existsSync(to)) fs.renameSync(to, inside(saves, `${b.world} (before restore ${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')})`)) // keep the current one
+      for (const [rel, data] of Object.entries(unzipSync(fs.readFileSync(path.join(dir(pid), 'world-backups', file))))) if (!rel.endsWith('/')) write(to, rel, data)
+      return b.world
     },
     logFiles: pid => {
       const p = load(pid)

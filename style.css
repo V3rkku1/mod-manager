@@ -521,3 +521,4 @@ body.lxv #lxList { display: grid; grid-template-columns: minmax(0, 1fr); grid-au
 .lxpanel p { margin: 0; } .lxp button.tag { border: 0; cursor: pointer; text-decoration: none; }
 .lxp .actions .prep { opacity: 1; } .lxp .actions .stop { background: var(--danger); }
 .lxp .top { flex-wrap: wrap; row-gap: 4px; }
+#chgBody section.chg + section.chg { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); } #chgBody menu { position: sticky; bottom: 0; }

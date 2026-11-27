@@ -262,7 +262,23 @@ const allOffLabel = () => { const off = cur.mods.length && cur.mods.every(m => m
 $('#src').onchange = () => { chips.clear(); render() }
 $('#list').addEventListener('keydown', e => { if (e.target.id === 'jump' && e.key === 'Enter') { const n = Math.min(pages, Math.max(1, +e.target.value || 1)); page = n; search(true) } })
 $('#checkUpd').onclick = () => checkUpdates()
+// Update all: first the changelog of every update in one dialog, then update on confirm.
 $('#updAll').onclick = async () => {
+  const id = cur.id, ids = Object.keys(updates[id] || {})
+  $('#chgTitle').textContent = `${ids.length} update${ids.length === 1 ? '' : 's'}`
+  $('#chgBody').innerHTML = '<div class="skel"></div>'; $('#chgDlg').showModal()
+  const clean = c => !c ? '<p class="muted">No changelog for this version.</p>' : DOMPurify.sanitize(c.html || marked.parse(c), { FORBID_ATTR: ['style'], FORBID_TAGS: ['style', 'form', 'input', 'button'] })
+  const logs = await Promise.all(ids.map(mid => { const m = cur.mods.find(x => x.id === mid), u = updates[id][mid]; return api.changelog(id, srcOf(m), mid, u.vid).catch(() => null) }))
+  if (cur?.id !== id || !$('#chgDlg').open) return
+  $('#chgBody').innerHTML = ids.map((mid, i) => { const m = cur.mods.find(x => x.id === mid), u = updates[id][mid]
+    return `<section class="chg"><h3>${esc(m.name)} <span class="muted small">${esc(m.version)} → ${esc(u.version ?? u)}</span></h3>${clean(logs[i])}</section>` }).join('')
+    + `<menu><button type="button" data-close-chg>Cancel</button><button type="button" class="primary" data-upd-all>Update all ${ids.length}</button></menu>`
+}
+$('#chgDlg').addEventListener('click', e => {
+  if (e.target.closest('[data-close-chg]')) $('#chgDlg').close()
+  if (e.target.closest('[data-upd-all]')) { $('#chgDlg').close(); updateAll() }
+})
+async function updateAll() {
   const id = cur.id, ids = Object.keys(updates[id] || {}), b = $('#updAll')
   b.disabled = true
   await api.snapshot(id, `Before updating ${ids.length} mod${ids.length === 1 ? "" : "s"}`).catch(() => {})
@@ -442,6 +458,11 @@ async function startGame(id, quick = {}) {
   if (bad.length && !confirm(`This profile may crash:\n${bad.slice(0, 5).map(x => x.type === 'missing' ? `• ${x.mods.join(', ')} need ${x.depName}${x.disabled ? ' (switched off)' : ''}`
     : x.type === 'duplicate' ? `• Same mod twice: ${x.files.join(' and ')}` : `• ${x.mods.join(' and ')} are incompatible`).join('\n')}\n\nFix it in Installed, or press OK to play anyway.`)) {
     tab = 'installed'; return render()
+  }
+  if (p.backupWorlds) {
+    status[id] = 'Backing up worlds…'; playButton()
+    const done = await api.backupWorlds(id).catch(e => (toast(`World backup failed: ${e.message}`, true), []))
+    if (done.length) toast(`Backed up ${done.join(', ')}`)
   }
   status[id] = 'Preparing…'; playButton()
   try {
@@ -694,8 +715,10 @@ window.onEvent?.((e, d) => {
     if (d.text === null) {
       running.delete(d.pid); delete status[d.pid]
       if (d.exit) crashHelp(d.pid, d.exit)
+      else if (started[d.pid]) crashCheck(d.pid, started[d.pid]) // official launcher / Prism / own command: no exit code, look for a fresh crash report
+      delete started[d.pid]
       api.listProfiles().then(ps => { ps.forEach(setProfile); if (cur?.id === d.pid) $('#pmeta').textContent = meta(cur) })
-    } else if (d.text === 'Running') running.add(d.pid), delete status[d.pid]
+    } else if (d.text === 'Running') running.add(d.pid), delete status[d.pid], started[d.pid] ||= Date.now()
     else status[d.pid] = d.text
     if (cur?.id === d.pid) playButton()
     document.querySelector(`#rail [data-id="${d.pid}"]`)?.classList.toggle('playing', running.has(d.pid))
@@ -738,11 +761,14 @@ async function showLogs() {
 }
 
 async function showWorlds() {
-  const id = cur.id, w = await run(() => api.worlds(id))
+  const id = cur.id, w = await run(() => api.worlds(id)), bk = await api.worldBackups(id).catch(() => [])
   if (!w || cur.id !== id || tab !== 'worlds') return
   $('#list').innerHTML = `<div class="section"><h4>SINGLEPLAYER</h4><div class="wgrid">${w.worlds.map(x => `<div class="world">
       ${x.icon ? `<img src="${x.icon}" alt="">` : '<div class="noicon"></div>'}<div><b>${esc(x.name)}</b><small>${new Date(x.modified).toLocaleDateString()}</small></div>
-      <button data-world="${esc(x.name)}" title="Play this world">${ic('play')}</button></div>`).join('') || '<p class="muted">No worlds yet.</p>'}</div></div>
+      <button class="icon" data-wbackup="${esc(x.name)}" title="Back up this world">${ic('download')}</button><button data-world="${esc(x.name)}" title="Play this world">${ic('play')}</button></div>`).join('') || '<p class="muted">No worlds yet.</p>'}</div>
+    <label class="check"><input type="checkbox" class="switch" id="autoBackup" ${cur.backupWorlds ? 'checked' : ''}> Back up changed worlds before every Play (newest 10 kept per world)</label></div>
+    ${bk.length ? `<div class="section"><h4>WORLD BACKUPS</h4>${bk.slice(0, 30).map(b => `<div class="acct"><b>${esc(b.world)}</b><span class="muted small">${new Date(b.time).toLocaleString()} · ${gb(b.size)}</span>
+      <button data-wrestore="${esc(b.file)}">Restore</button></div>`).join('')}</div>` : ''}
     <div class="section"><h4>SERVERS</h4><div class="wgrid">${w.servers.map(x => `<div class="world"><div class="noicon"></div><div><b>${esc(x.name)}</b><small>${esc(x.ip)}</small></div>
       <button data-server="${esc(x.ip)}" title="Join">${ic('play')}</button><button class="icon" data-rmserver="${esc(x.ip)}" title="Remove">${ic('trash')}</button></div>`).join('') || '<p class="muted">No servers saved.</p>'}</div>
     <div class="row addsrv"><input name="sname" placeholder="Name (optional)" maxlength="40"><input name="sip" placeholder="Server address, e.g. play.example.com" maxlength="120"><button id="addServer">${ic('plus')} Add server</button></div>
@@ -784,6 +810,8 @@ $('#list').addEventListener('click', async e => {
     if (running.has(id) || status[id]) return toast('Already running', true)
     return run(() => startGame(id, t.dataset.world ? { world: t.dataset.world } : { server: t.dataset.server }))
   }
+  if (t.dataset.wbackup) { t.disabled = true; if (await run(() => api.worldBackup(id, t.dataset.wbackup))) toast(`${t.dataset.wbackup} backed up`); return showWorlds() }
+  if (t.dataset.wrestore && confirm('Restore this backup? The world as it is now is kept, renamed "(before restore …)".')) { const w = await run(() => api.worldRestore(id, t.dataset.wrestore)); if (w) toast(`${w} restored`), showWorlds(); return }
   if (t.dataset.rmserver) { const w = await run(() => api.removeServer(id, t.dataset.rmserver)); if (w) showWorlds(); return }
   if (t.id === 'addServer') {
     const f = t.closest('.section'), name = f.querySelector('[name=sname]').value.trim(), ip = f.querySelector('[name=sip]').value.trim()
@@ -1054,10 +1082,16 @@ async function askOrphans() {
   if (cur?.id === id) updateBadges(), showInstalled()
 }
 
-async function crashHelp(pid, code) {
-  const p = profiles.find(p => p.id === pid), r = await api.analyzeCrash(pid).catch(() => ({ suspects: [] }))
-  $('#crashBody').innerHTML = `<p class="muted center">${esc(p?.name)} closed with exit code ${esc(code)}.</p>
-    ${r.suspects.length ? `<h3>LIKELY CAUSE</h3>${r.suspects.map(m => `<div class="acct"><b>${esc(m.name)}</b><button class="primary" data-crash-off="${esc(m.id)}">Disable & retry</button></div>`).join('')}`
+const started = {}
+async function crashCheck(pid, since) {
+  const r = await api.analyzeCrash(pid).catch(() => null)
+  if (r?.crash && r.time >= since - 5000) crashHelp(pid, null, r)
+}
+async function crashHelp(pid, code, r) {
+  const p = profiles.find(p => p.id === pid); r ||= await api.analyzeCrash(pid).catch(() => ({ suspects: [] }))
+  $('#crashBody').innerHTML = `<p class="muted center">${esc(p?.name)} ${code == null ? 'crashed (it wrote a crash report)' : `closed with exit code ${esc(code)}`}.</p>
+    ${r.suspects.length ? `<h3>LIKELY CAUSE</h3>${r.suspects.map(m => `<div class="acct"><b>${esc(m.name)}</b><button class="primary" data-crash-off="${esc(m.id)}">Disable & retry</button></div>`).join('')}
+      ${r.suspects.length > 1 ? `<button class="primary" data-crash-off="${esc(r.suspects.map(m => m.id).join('\n'))}">Disable all ${r.suspects.length} & retry</button>` : ''}`
       : '<p>No specific mod found. Check the log, or try "Play without mods" in Options.</p>'}
     ${r.snippet ? `<pre class="snip">${esc(r.snippet)}</pre>` : ''}
     <menu><button data-crash-logs>Open logs</button><button class="primary" data-close-crash>Close</button></menu>`
@@ -1070,8 +1104,8 @@ $('#crashDlg').addEventListener('click', async e => {
   const off = e.target.closest('[data-crash-off]')?.dataset.crashOff
   if (!off) return
   $('#crashDlg').close()
-  const p = await run(() => api.setDisabled(pid, off, true)); if (!p) return
-  setProfile(p); cur = p; render(); toast('Mod disabled — starting again')
+  let p; for (const id of off.split('\n')) p = await run(() => api.setDisabled(pid, id, true)); if (!p) return
+  setProfile(p); cur = p; lxView = false; render(); toast(`${off.includes('\n') ? 'Mods' : 'Mod'} disabled — starting again`)
   $('#play').click()
 })
 
@@ -1313,6 +1347,7 @@ $('#list').addEventListener('keydown', e => {
   if (e.target.id !== 'scmd' || e.key !== 'Enter' || !e.target.value.trim()) return
   api.serverCmd(cur.id, e.target.value); e.target.value = ''
 })
+$('#list').addEventListener('change', async e => { if (e.target.id === 'autoBackup') { const p = await run(() => api.updateProfile(cur.id, { backupWorlds: e.target.checked })); if (p) setProfile(p) } })
 $('#list').addEventListener('change', e => { if (e.target.id === 'javaPick') { const i = $('#optsForm [name=java]'); i.hidden = e.target.value !== 'custom'; if (!i.hidden) i.focus() } })
 
 // ---- Import preview (diff against an existing profile) ----
@@ -1607,7 +1642,7 @@ async function lxGo(b, name, a) {
   if (!ok && !lxBusy.has(name)) lxOpen.set(name, 'log')
   if (lxView) drawLx()
 }
-const gb = n => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : (n / 1e6).toFixed(0) + ' MB'
+const gb = n => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : n >= 1e6 ? (n / 1e6).toFixed(0) + ' MB' : Math.ceil(n / 1e3) + ' KB'
 $('#lxList').addEventListener('submit', async e => {
   e.preventDefault()
   if (e.target.dataset.opts) {
