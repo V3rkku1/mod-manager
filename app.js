@@ -438,7 +438,7 @@ async function openSettings() {
   el.githubToken.value = s.githubToken || ''; el.modrinthToken.value = s.modrinthToken || ''; el.maxMem.value = s.launch?.maxMem || ''
   el.theme.value = look.theme; el.density.value = look.density; el.scale.value = look.scale; el.motion.checked = look.motion; el.descs.checked = look.descs
   el.accent.value = look.accent; $('#accentPick').value = look.accent; $('#scaleOut').textContent = look.scale + '%'
-  $('#login').hidden = true; showAccounts(); lookSaved = false
+  $('#login').hidden = true; showAccounts(); showPlayit(); lookSaved = false
   setSection('appearance'); $('#settingsDlg').showModal()
 }
 const setSection = sec => {
@@ -750,6 +750,28 @@ $('#snapshots').onchange = loadVersions
 
 api.running?.().then(r => { running = new Set(r); playButton() })
 
+// ---- playit.gg account ----
+async function showPlayit() {
+  const st = await api.playitStatus()
+  $('#pitBox').innerHTML = st.linked
+    ? `<div class="acct on"><span class="dot on"></span><b>playit.gg linked</b>
+        <label class="check small"><input type="checkbox" class="switch" id="pitUse" ${st.tunnel !== 'bore' ? 'checked' : ''}> Use for public addresses</label>
+        <button type="button" class="danger" id="pitUnlink">Unlink</button></div>`
+    : `<button type="button" id="pitLink" class="primary">${ic('globe')} Link playit.gg account (free)</button><div id="pitWait" class="muted small"></div>`
+}
+$('#pitBox').addEventListener('click', async e => {
+  const t = e.target.closest('button'); if (!t) return
+  if (t.id === 'pitUnlink' && confirm('Unlink playit.gg? Servers fall back to bore.pub.')) { await run(() => api.playitUnlink()); return showPlayit() }
+  if (t.id === 'pitLink') run(async () => {
+    t.disabled = true
+    const c = await api.playitLinkStart()
+    $('#pitWait').innerHTML = `Approve Mod Manager on the playit.gg page that opened (<a data-href="${esc(c.url)}">${esc(c.url)}</a>). Waiting…`
+    api.openExternal(c.url)
+    try { await api.playitLinkFinish(c.code); toast('playit.gg linked') } finally { showPlayit() }
+  })
+})
+$('#pitBox').addEventListener('change', e => { if (e.target.id === 'pitUse') run(() => api.saveSettings({ tunnel: e.target.checked ? 'auto' : 'bore' })) })
+
 // ---- Keyboard shortcuts + quick switcher ----
 document.addEventListener('keydown', e => {
   if (!(e.ctrlKey || e.metaKey) || document.querySelector('dialog[open]:not(#quickDlg)')) return
@@ -859,10 +881,11 @@ async function showServer() {
     ${!s.running && s.issues.length ? `<div class="banner warn">${ic('alert')}<div><b>The server stopped with problems</b>${s.issues.map(i => `<p>${esc(i)}</p>`).join('')}</div><button id="srvShareLog">${ic('share')} Share log</button></div>` : ''}
     ${s.running ? `<div class="addr">
         <div><small>SAME WI-FI / LAN</small><code>${esc(s.lan || '')}</code><button class="icon" data-copy-text="${esc(s.lan || '')}">${ic('copy')}</button></div>
-        ${kind === 'bedrock' ? '<div><small>ONLINE</small><span class="muted small">Bedrock uses UDP, which the free tunnel does not carry. Friends outside your network need port forwarding (UDP ' + esc(o.port) + ').</span></div>'
-          : `<div><small>ONLINE (FRIENDS ANYWHERE)</small>${s.address ? `<code>${esc(s.address)}</code><button class="icon" data-copy-text="${esc(s.address)}">${ic('copy')}</button>`
+        ${kind === 'bedrock' && !s.playit && !s.address ? '<div><small>ONLINE</small><span class="muted small">Bedrock uses UDP: link a free playit.gg account in Settings → Accounts, or forward UDP port ' + esc(o.port) + ' on your router.</span></div>'
+          : `<div><small>ONLINE (FRIENDS ANYWHERE)${s.playit ? ' · PLAYIT.GG' : ''}</small>${s.address ? `<code>${esc(s.address)}</code><button class="icon" data-copy-text="${esc(s.address)}">${ic('copy')}</button>`
           : `<button id="srvShare" ${s.online ? '' : 'disabled'}>${ic('globe')} Get public address</button>`}</div>`}
-        ${s.bedrock && kind !== 'bedrock' ? `<div><small>BEDROCK (LAN, UDP)</small><code>${esc(s.bedrock)}</code><button class="icon" data-copy-text="${esc(s.bedrock)}">${ic('copy')}</button></div>` : ''}
+        ${s.bedrock && kind !== 'bedrock' ? `<div><small>BEDROCK${s.bedrockPublic ? ' (ONLINE)' : ' (LAN, UDP)'}</small><code>${esc(s.bedrockPublic || s.bedrock)}</code><button class="icon" data-copy-text="${esc(s.bedrockPublic || s.bedrock)}">${ic('copy')}</button></div>` : ''}
+        ${s.voice ? `<div><small>VOICE CHAT (UDP)</small><code>${esc(s.voice)}</code><button class="icon" data-copy-text="${esc(s.voice)}">${ic('copy')}</button><span class="muted small">Set as voice_host in config/voicechat/voicechat-server.properties</span></div>` : ''}
         ${s.address ? `<button id="srvInvite" class="primary">${ic('share')} Copy invite link (mods + server)</button>` : ''}</div>` : ''}
     <div class="dtabs stabs">${tabs}</div><div id="spane"></div></div>`
   const pane = $('#spane')
@@ -946,7 +969,7 @@ async function showServer() {
     const d = await api.diagnostics(id)
     if (srvTab !== 'help') return
     pane.innerHTML = `<div class="section"><h4>DIAGNOSTICS</h4>${d.map(x => `<div class="acct"><span class="dot ${x.ok ? 'on' : ''}"></span><b>${esc(x.name)}</b><span class="muted small">${esc(x.detail)}</span></div>`).join('')}</div>
-      <div class="section"><h4>TIPS</h4><p class="muted small">Friends can't join? Use "Get public address" and send them the bore.pub address. Mod servers need every player to have the same mods: send the invite link.
+      <div class="section"><h4>TIPS</h4><p class="muted small">Friends can't join? Use "Get public address" and send them the address. A linked playit.gg account (Settings → Accounts) is the most reliable and also works for Bedrock and voice chat. Mod servers need every player to have the same mods: send the invite link.
       If the free tunnel is down, forward port ${esc(o.port)} (TCP${kind === 'bedrock' ? '/UDP' : ''}) on your router to this PC.</p></div>
       <button id="srvShareLog">${ic('share')} Share server log</button> <button id="srvDiag">${ic('refresh')} Run again</button>`
   }

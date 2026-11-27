@@ -61,7 +61,7 @@ Server tab (Minecraft profiles), a self-hosting panel similar to SquidServers:
 
 - Start / Stop / Restart on this PC: Vanilla, Fabric, Forge or NeoForge, Java installed automatically.
 - Modpacks: the server gets the profile's mods minus client-only ones. Every jar is checked on Modrinth by SHA1, so this works for modpacks, CurseForge and local files too.
-- No port forwarding: "Get public address" opens a free bore.pub tunnel. "Copy invite link" sends friends the mods + server address.
+- No port forwarding: "Get public address" uses playit.gg when you link a free account (Settings > Accounts; stable address, also Bedrock/Geyser and Simple Voice Chat over UDP), otherwise a free bore.pub tunnel (Java only). "Copy invite link" sends friends the mods + server address.
 - Bedrock crossplay: Geyser + Floodgate (Fabric/NeoForge), Bedrock address shown (LAN; UDP).
 - Console with commands, Players (online list, op/kick/ban, whitelist), Settings (startup + server.properties editor: game mode, difficulty, PvP, seed, max players, whitelist…), Backups (back up now, back up on stop, restore, delete).
 - Auto-restart after crashes (max 3 in 10 minutes).

@@ -156,6 +156,8 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     return fresh
   }
   const servers = {}
+  const pit = require('./playit')(path.join(root, '..'))
+  const playitSecret = () => { const v = settings().playitSecret; try { return v ? decrypt(v) : null } catch { return null } }
   lib.progress.hook = d => emit('dl', d)
   const diff = (p, d) => {
     const have = Object.fromEntries(p.mods.filter(m => m.src !== 'local').map(m => [m.id, vidOf(m)])), want = Object.fromEntries(d.m.map(([id, v]) => [id, v]))
@@ -385,6 +387,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       child.on('error', e => log(`Could not start: ${e.message}`))
       child.on('exit', async code => {
         s.timers.forEach(clearInterval); s.tunnel?.close(); log(`Server stopped (code ${code})`)
+        if (s.playit && !Object.values(servers).some(x => x !== s && x.playit)) pit.stopAgent()
         lastLogs[pid] = s.log; delete servers[pid]
         if (!s.stopping) lastIssues[pid] = analyzeServer(s.log)
         const o = load(pid).server || {}
@@ -412,7 +415,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
     'preview', 'checkFollow', 'publish', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
-    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -428,13 +431,14 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       return save(p)
     },
     deleteProfile: id => fs.rmSync(dir(id), { recursive: true, force: true }),
-    getSettings: settings,
+    // Secrets that only the main process needs are not sent to the window.
+    getSettings: () => { const { playitSecret: _, ...s } = settings(); return s },
     setSettings: patch => {
       // Appearance values are validated; the rest are plain strings/booleans.
       const LOOK = { theme: v => ['midnight', 'amoled', 'dark', 'light'].includes(v), accent: v => /^#[0-9a-f]{6}$/i.test(v), density: v => ['comfy', 'compact'].includes(v),
         scale: v => v >= 80 && v <= 130, motion: v => typeof v === 'boolean', descs: v => typeof v === 'boolean', rememberLast: v => typeof v === 'boolean' }
       for (const [k, ok] of Object.entries(LOOK)) if (k in patch && !ok(patch[k])) delete patch[k]
-      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'autoStart', 'autoUpdate', ...Object.keys(LOOK)].filter(k => k in patch)
+      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'autoStart', 'autoUpdate', 'tunnel', ...Object.keys(LOOK)].filter(k => k in patch)
       return setSettingsRaw({ ...Object.fromEntries(pick.map(k => [k, patch[k]])), ...(patch.launch ? { launch: cleanLaunch(patch.launch) } : {}) })
     },
 
@@ -589,7 +593,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     // ---- Minecraft server (local, optional public address through bore.pub) ----
     serverStatus: pid => {
       const s = servers[pid], p = load(pid), icon = path.join(sdirOf(pid), 'server-icon.png')
-      return { running: !!s, online: !!s?.online, address: s?.address, lan: s?.lan, bedrock: s?.bedrock, players: s ? [...s.players] : [],
+      return { running: !!s, online: !!s?.online, address: s?.address, lan: s?.lan, bedrock: s?.bedrock, bedrockPublic: s?.bedrockPublic, voice: s?.voice, playit: !!playitSecret() && settings().tunnel !== 'bore', players: s ? [...s.players] : [],
         since: s?.since, log: s?.log || lastLogs[pid] || [], issues: s ? [] : lastIssues[pid] || [], opts: p.server || {}, kind: kindOf(p),
         icon: fs.existsSync(icon) ? 'data:image/png;base64,' + fs.readFileSync(icon).toString('base64') : null, ram: Math.round(os.totalmem() / 1048576) }
     },
@@ -735,21 +739,48 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         check('Internet / Modrinth', async () => (await json(`${MR}/tag/loader`)).length && 'ok'),
         check('Mojang downloads', async () => (await mcl.versions()).length && 'ok'),
         check('Tunnel service (bore.pub)', () => tcp('bore.pub', 7835)),
+        check('playit.gg', async () => { const t = Date.now(); await pit.ping(); return `${playitSecret() ? 'linked' : 'not linked'} · API ${Date.now() - t} ms` }),
         check(`Port ${port} free`, async () => servers[pid] ? 'used by this server' : (await portFree(port)) ? 'free' : Promise.reject(new Error('used by another program'))),
         check('Memory', async () => `${Math.round(os.totalmem() / 1073741824)} GB total, ${Math.round(os.freemem() / 1073741824)} GB free`),
       ])
     },
     // Public address for friends outside your network.
+    // Public address: playit.gg when linked (Java + Bedrock/UDP + voice chat), otherwise bore.pub (Java TCP only).
     serverShare: async pid => {
       const s = servers[pid]
       if (!s) throw new Error('Start the server first')
       if (s.address) return s.address
-      const port = +s.lan.split(':')[1]
-      s.tunnel = await tunnel.open(port, { onError: () => { s.address = null; emit('sstatus', { pid }) } })
-      s.address = `${s.tunnel.host}:${s.tunnel.port}`
+      const port = +s.lan.split(':')[1], kind = kindOf(load(pid)), secret = playitSecret()
+      const log = line => { s.log.push(line); emit('slog', { pid, line }) }
+      if (secret && settings().tunnel !== 'bore') {
+        log('Opening playit.gg tunnel…')
+        await pit.startAgent(secret, log)
+        s.playit = true
+        s.address = await pit.tunnel(secret, { name: `mm-${pid}`, localPort: port, kind: kind === 'bedrock' ? 'bedrock' : 'java' })
+        if (kind !== 'bedrock' && s.bedrock) s.bedrockPublic = await pit.tunnel(secret, { name: `mm-${pid}-bedrock`, localPort: 19132, kind: 'bedrock' }).catch(e => (log(e.message), null))
+        // Simple Voice Chat uses UDP 24454 next to the server.
+        const sdir = sdirOf(pid, kind)
+        if (['mods', 'plugins'].some(d => fs.existsSync(path.join(sdir, d)) && fs.readdirSync(path.join(sdir, d)).some(f => /voicechat/i.test(f))))
+          s.voice = await pit.tunnel(secret, { name: `mm-${pid}-voice`, localPort: 24454, kind: 'udp' }).catch(e => (log(e.message), null))
+        // Tell Simple Voice Chat which public address to hand to players (read at server start).
+        if (s.voice) for (const f of ['config/voicechat/voicechat-server.properties', 'plugins/voicechat/voicechat-server.properties']) {
+          const file = path.join(sdir, f)
+          if (!fs.existsSync(file)) continue
+          const t = fs.readFileSync(file, 'utf8'), line = `voice_host=${s.voice}`
+          if (!t.includes(line)) { fs.writeFileSync(file, /^voice_host=.*$/m.test(t) ? t.replace(/^voice_host=.*$/m, line) : t + `\n${line}\n`); log('Voice chat address saved — restart the server once so players get it') }
+        }
+      } else {
+        if (kind === 'bedrock') throw new Error('Bedrock needs UDP: link a free playit.gg account in Settings → Accounts')
+        s.tunnel = await tunnel.open(port, { onError: () => { s.address = null; emit('sstatus', { pid }) } })
+        s.address = `${s.tunnel.host}:${s.tunnel.port}`
+      }
       emit('sstatus', { pid })
       return s.address
     },
+    playitStatus: () => ({ linked: !!playitSecret(), tunnel: settings().tunnel || 'auto' }),
+    playitLinkStart: () => pit.claimStart(),
+    playitLinkFinish: async code => { setSettingsRaw({ playitSecret: encrypt(await pit.claimFinish(code)) }); return true },
+    playitUnlink: () => { pit.stopAgent(); setSettingsRaw({ playitSecret: undefined }); return true },
     // Invite: share code + server address; friends' import adds it to their server list.
     inviteCode: pid => {
       const s = servers[pid]
