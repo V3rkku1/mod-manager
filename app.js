@@ -638,10 +638,27 @@ $('#newForm').onsubmit = async e => {
 }
 
 // App self-update: main process downloads it, we offer a restart.
-window.onUpdateReady?.(v => {
-  const b = $('#updBar'); b.hidden = false
-  b.querySelector('span').textContent = `Update ${v} ready — restart`
+// Bar in the title bar: download progress, then "Restart to update" + "What's new" (the GitHub release notes, shown as plain text).
+window.onUpdateReady?.((v, notes) => {
+  const b = $('#updBar'); b.hidden = false; b.disabled = false
+  b.querySelector('span').textContent = `Restart to update to ${v}`
   b.onclick = () => api.installUpdate()
+  // Block tags to line breaks, then text only (DOMParser only parses: nothing in the notes runs).
+  const html = (notes || '').replace(/<li[^>]*>/gi, '• ').replace(/<\/(p|h\d|li|ul|ol|div)>|<br\s*\/?>/gi, '\n')
+  const text = new DOMParser().parseFromString(html, 'text/html').body.textContent.replace(/\n{3,}/g, '\n\n').trim()
+  $('#updNotes').hidden = !text
+  $('#updNotes').onclick = () => { $('#notesTitle').textContent = `What's new in ${v}`; $('#notesText').textContent = text; $('#notesDlg').showModal() }
+})
+const appUpdateProgress = d => { const b = $('#updBar'); if (!b.onclick) { b.hidden = false; b.disabled = true; b.querySelector('span').textContent = `Downloading update · ${d.percent}%` } }
+// After an update: say so once.
+api.appVersion?.().then(v => {
+  let last; try { last = localStorage.lastVersion; localStorage.lastVersion = v } catch {}
+  if (last && last !== v) toast(`Updated to ${v}`)
+  $('#appVer').textContent = `Version ${v}`
+}).catch(() => {})
+$('#checkUpd2').onclick = () => run(async () => {
+  const r = await api.checkUpdate()
+  toast(r.dev ? 'Updates work in the installed app only' : r.latest && r.latest !== r.current ? `Downloading ${r.latest} — a restart button appears when it's ready` : `You have the latest version (${r.current})`)
 })
 // Nexus "Mod Manager Download" links
 window.onNxm?.(link => run(async () => {
@@ -677,6 +694,7 @@ window.onEvent?.((e, d) => {
   if (e === 'dl') dlUpdate(d)
   if (e === 'published') toast('Your friends got the updated mod list')
   if (e === 'toast') toast(d.text, d.error)
+  if (e === 'appUpdate') appUpdateProgress(d)
   if ((e === 'slog' || e === 'sstatus') && cur?.id === d.pid && tab === 'server') e === 'slog' ? appendTo($('#slog'), d.line) : srvTab !== 'settings' && showServer()
   if (e === 'log' && cur?.id === d.pid && tab === 'logs' && $('#logsel')?.value === 'live') appendLog(d.line)
 })
@@ -1468,7 +1486,7 @@ async function drawLx() {
   $('main .hd use').setAttribute('href', tab === 'lxsettings' ? '#i-sliders' : '#i-package')
   const warn = window.platform === 'win32' ? '' : `<div class="banner warn">${ic('alert')}<div><p>Projects build and run on Windows. You can still edit the list here.</p></div></div>`
   const initials = n => esc(n.replace(/[^A-Za-z0-9]+/g, ' ').trim().split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase())
-  $('#lxList').innerHTML = tab === 'lxsettings' ? `${warn}<form class="opts" onsubmit="return false">
+  $('#lxList').innerHTML = tab === 'lxsettings' ? `${warn}<form class="opts">
     <label>INSTANCE NAME<input id="lxName" value="${esc(c.name)}" maxlength="40"></label>
     <label>PROJECTS FOLDER<div class="codebox"><input id="lxRoot" value="${esc(c.root)}"><button type="button" data-lx="pickRoot">${ic('folder')}</button></div></label>
     <label><span>GAME EXE <span class="muted">(used as {game} in run and shader commands)</span></span><div class="codebox"><input id="lxGame" value="${esc(c.game)}" placeholder="Pick the game .exe"><button type="button" data-lx="pickGame">${ic('file')}</button></div></label>
@@ -1518,6 +1536,6 @@ $('#lxList').addEventListener('click', async e => {
   }
 })
 $('#lxList').addEventListener('submit', async e => {
-  e.preventDefault()
+  e.preventDefault(); if (e.target.id !== 'lxForm') return
   if (await run(() => api.lxPut(Object.fromEntries(new FormData(e.target)), lxEdit || undefined))) { lxEdit = null; drawLx(); toast('Project saved') }
 })

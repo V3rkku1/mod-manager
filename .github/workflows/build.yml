@@ -50,4 +50,5 @@ jobs:
           tag_name: ${{ steps.v.outputs.tag }}
           target_commitish: ${{ github.sha }}
           files: dist/*
+          body_path: RELEASE_NOTES.md
           generate_release_notes: true

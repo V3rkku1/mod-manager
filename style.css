@@ -511,3 +511,6 @@ body.lxv #lxList { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8p
 .lxp .actions { display: flex; gap: 6px; align-items: center; } .lxp .actions button:not(.icon) { padding: 8px 12px; }
 .lxp .body { cursor: default; } .lxp .body:hover b { text-decoration: none; }
 .lxform { max-width: none; } .lxform h3 { margin: 0; color: var(--head); font-size: 15px; }
+#updNotes { -webkit-app-region: no-drag; font-size: 12px; margin-left: 8px; }
+#notesDlg { width: min(640px, calc(100vw - 32px)); } #notesText { white-space: pre-wrap; max-height: 60vh; overflow-y: auto; font-size: 14px; line-height: 1.5; }
+.appver { align-items: center; } .appver > * { flex: none; }

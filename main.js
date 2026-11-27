@@ -41,6 +41,13 @@ app.whenReady().then(() => {
   // Title bar buttons follow the app theme.
   ipcMain.handle('titlebar', (_, color, symbolColor) => /^#[0-9a-f]{3,6}$/i.test(color) && /^#[0-9a-f]{3,6}$/i.test(symbolColor) && process.platform !== 'darwin' && win?.setTitleBarOverlay({ color, symbolColor }))
   ipcMain.handle('installUpdate', () => autoUpdater.quitAndInstall())
+  ipcMain.handle('appVersion', () => app.getVersion())
+  // Settings > App > Check for updates. A found update downloads in the background and shows the bar when ready.
+  ipcMain.handle('checkUpdate', async () => {
+    if (!app.isPackaged) return { current: app.getVersion(), dev: true }
+    const r = await autoUpdater.checkForUpdates()
+    return { current: app.getVersion(), latest: r?.updateInfo?.version }
+  })
 
   // Window size/position is remembered between runs.
   const boundsFile = path.join(app.getPath('userData'), 'window.json')
@@ -81,7 +88,9 @@ app.whenReady().then(() => {
   })
 
   // Checks GitHub Releases, downloads in background, installs on quit. Only the installed (NSIS) build can self-update.
-  autoUpdater.on('update-downloaded', i => win.webContents.send('updateReady', i.version))
+  const notes = i => [].concat(i.releaseNotes || []).map(n => n.note ?? n).join('\n') // GitHub release body (HTML)
+  autoUpdater.on('download-progress', p => win?.webContents.send('event', 'appUpdate', { percent: Math.round(p.percent) }))
+  autoUpdater.on('update-downloaded', i => win?.webContents.send('updateReady', i.version, notes(i)))
   const check = () => autoUpdater.checkForUpdates().catch(() => {})
   if (app.isPackaged && core.getSettings().autoUpdate !== false) check(), setInterval(check, 3600e3)
 })
