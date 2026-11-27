@@ -2,6 +2,8 @@
 
 Windows mod manager with a Discord-style UI and one-paste profile sharing. Sources: **Thunderstore**, **Terraria** (tModLoader, Steam Workshop), **Minecraft** (Modrinth mods + modpacks, CurseForge), **CurseForge**, **Nexus Mods**, **GameBanana**.
 
+**First time? See [SETUP.md](SETUP.md)** (also in the app: Settings → Setup).
+
 ## Download
 
 Get the latest from [Releases](https://github.com/V3rkku1/mod-manager/releases/latest):

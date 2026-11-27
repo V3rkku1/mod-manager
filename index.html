@@ -115,6 +115,7 @@
       <p class="muted">Make a profile for any game on Thunderstore, CurseForge, Nexus Mods, GameBanana or Minecraft — or import what a friend shared.</p>
       <div class="row"><button class="primary big" id="start"><svg class="i"><use href="#i-plus"/></svg> New profile</button>
       <button class="big" id="startImport"><svg class="i"><use href="#i-import"/></svg> Import</button></div>
+      <button class="linkish" id="startSetup">Setup checklist</button>
     </div>
   </div>
 </div>
@@ -171,6 +172,7 @@
   <form id="settingsForm">
     <nav class="setnav">
       <b>Settings</b>
+      <button type="button" data-sec="setup"><svg class="i"><use href="#i-check"/></svg> Setup <em id="setupLeft"></em></button>
       <button type="button" data-sec="appearance" class="on"><svg class="i"><use href="#i-sliders"/></svg> Appearance</button>
       <button type="button" data-sec="accounts"><svg class="i"><use href="#i-user"/></svg> Accounts</button>
       <button type="button" data-sec="minecraft"><svg class="i"><use href="#i-grass"/></svg> Minecraft</button>
@@ -179,6 +181,12 @@
     </nav>
     <div class="setbody">
       <button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
+      <section data-sec="setup" hidden>
+        <h2>Setup checklist</h2>
+        <p class="muted">Everything the app needs, in one place. Required items first; the rest unlock extra features.</p>
+        <div id="setupList"></div>
+        <button type="button" id="setupRecheck">Check again</button>
+      </section>
       <section data-sec="appearance">
         <h2>Appearance</h2>
         <h3>THEME</h3>

@@ -512,7 +512,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
     'preview', 'checkFollow', 'publish', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
-    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -898,6 +898,53 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     },
     // Release notes for one version (fetched when the user opens them).
     changelog: async (pid, src, id, vid) => S[src].changelog ? S[src].changelog(load(pid), id, vid) : null,
+
+    // Play without the app's own Microsoft login: hand the instance to the official Minecraft Launcher.
+    // Copies the prepared version (loader) + its libraries into .minecraft and adds a launcher profile pointing at this instance.
+    playOfficial: async pid => {
+      let p = load(pid)
+      if (p.type !== 'modrinth') throw new Error('Only Minecraft profiles')
+      const status = text => emit('status', { pid, text })
+      status('Preparing…')
+      try {
+        const plan = await mcl.prepare({ mc: p.mc.version, loader: p.mc.loader, loaderVersion: p.mc.loaderVersion, progress: status })
+        p = await serialDeploy(pid)
+        if (plan.loaderVersion && plan.loaderVersion !== p.mc.loaderVersion) p = save({ ...p, mc: { ...p.mc, loaderVersion: plan.loaderVersion } })
+        const mcd = minecraftDir(), base = path.join(root, '..', 'minecraft')
+        for (let id = plan.id; id;) {
+          const from = path.join(base, 'versions', id)
+          fs.cpSync(from, path.join(mcd, 'versions', id), { recursive: true, force: false, errorOnExist: false })
+          id = JSON.parse(fs.readFileSync(path.join(from, `${id}.json`), 'utf8')).inheritsFrom
+        }
+        const libs = path.join(base, 'libraries')
+        for (const f of plan.classpath) if (f.startsWith(libs + path.sep)) {
+          const to = path.join(mcd, 'libraries', path.relative(libs, f))
+          if (!fs.existsSync(to) && fs.existsSync(f)) fs.mkdirSync(path.dirname(to), { recursive: true }), fs.copyFileSync(f, to)
+        }
+        const lpFile = path.join(mcd, 'launcher_profiles.json')
+        let lp = {}; try { lp = JSON.parse(fs.readFileSync(lpFile, 'utf8')) } catch {}
+        const mem = p.launch?.maxMem || settings().launch?.maxMem || 4096
+        lp.profiles = { ...lp.profiles, [`mm-${pid}`]: { ...lp.profiles?.[`mm-${pid}`], name: p.name, type: 'custom', icon: 'Grass', lastVersionId: plan.id, gameDir: p.target,
+          javaArgs: `-Xmx${mem}M -Dlog4j2.formatMsgNoLookups=true`, created: lp.profiles?.[`mm-${pid}`]?.created || new Date().toISOString(), lastUsed: new Date().toISOString() } }
+        fs.mkdirSync(mcd, { recursive: true }); writeAtomic(lpFile, JSON.stringify(lp, null, 2))
+        let launched = false
+        if (process.platform === 'win32') {
+          const run = (cmd, args) => spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref()
+          const exe = ['ProgramFiles(x86)', 'ProgramFiles'].map(k => process.env[k] && path.join(process.env[k], 'Minecraft Launcher', 'MinecraftLauncher.exe')).find(f => f && fs.existsSync(f))
+          exe ? run(exe, []) : run('explorer.exe', ['shell:AppsFolder\\Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft'])
+          launched = true
+        }
+        return { profile: p.name, version: plan.id, launched }
+      } finally { emit('status', { pid, text: null }) }
+    },
+    // Setup checklist: what still needs doing for every feature to work.
+    setupStatus: async () => {
+      const s = settings(), repo = require('./package.json').build?.publish
+      const ok = async u => { try { const r = await fetch(u, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(10e3) }); return r.status < 400 } catch { return null } }
+      const [releases, pages] = repo ? await Promise.all([ok(`https://github.com/${repo.owner}/${repo.repo}/releases/latest`), ok(`https://${repo.owner.toLowerCase()}.github.io/${repo.repo}/join.html`)]) : [null, null]
+      return { repo: repo && `${repo.owner}/${repo.repo}`, releases, pages, msLogin: readAccounts().length > 0, msClientId: !!s.msClientId, playit: !!playitSecret(),
+        curseforge: !!s.curseforgeKey, nexus: !!s.nexusKey, github: !!s.githubToken, minecraftLauncher: fs.existsSync(path.join(minecraftDir(), 'launcher_profiles.json')) }
+    },
 
     // World sync API
     syncStatus: pid => {

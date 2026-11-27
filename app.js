@@ -42,7 +42,7 @@ const meta = p => (p.type === 'modrinth' ? `Minecraft ${p.mc.version} · ${p.mc.
 const TITLES = { browse: ['Browse', 'compass'], installed: ['Installed', 'package'], worlds: ['Worlds', 'globe'], logs: ['Logs', 'terminal'], server: ['Server', 'server'], options: ['Options', 'sliders'] }
 const LINK = 'https://v3rkku1.github.io/mod-manager/join.html#'
 let selected = new Set()
-let running = new Set(), status = {}, filterCache = {}, chips = new Set(), pages = 1, remembering = true
+let setupLeft = 0, running = new Set(), status = {}, filterCache = {}, chips = new Set(), pages = 1, remembering = true
 
 function render() {
   const groups = [...new Set(profiles.map(p => p.group || ''))].sort()
@@ -50,7 +50,7 @@ function render() {
     + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''}" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}${Object.keys(updates[p.id] || {}).length ? `<i class="rbadge">${Object.keys(updates[p.id]).length}</i>` : ''}</button>`).join('')).join('')
     + (profiles.length ? '<div class="sep"></div>' : '')
     + `<button class="pfp add" id="add" data-tip="New profile">${ic('plus')}</button>`
-    + `<button class="pfp gear" id="settings" data-tip="Settings">${ic('gear')}</button>`
+    + `<button class="pfp gear" id="settings" data-tip="${setupLeft ? 'Finish setup' : 'Settings'}">${ic('gear')}${setupLeft ? `<i class="rbadge">${setupLeft}</i>` : ''}</button>`
   $('#app').classList.toggle('empty', !cur)
   if (!cur) return
   const mc = cur.type === 'modrinth'
@@ -209,7 +209,7 @@ $('#rail').onmouseleave = () => $('#tip').hidden = true
 $('#rail').onclick = e => {
   const b = e.target.closest('button'); if (!b) return
   if (b.id === 'add') return openNew()
-  if (b.id === 'settings') return openSettings()
+  if (b.id === 'settings') return openSettings(setupLeft ? 'setup' : 'appearance')
   cur = profiles.find(p => p.id === b.dataset.id); tab = 'browse'; $('#q').value = ''; chips.clear(); $('#section').value = ''; render()
 }
 $('#tabs').onclick = e => {
@@ -389,6 +389,13 @@ $('#play').onclick = () => run(async () => {
   const id = cur.id
   if (cur.type !== 'modrinth') { await deploy(); await api.launch(id); return toast('Mods deployed — starting game') }
   if (running.has(id)) return api.stop(id)
+  // No Microsoft account linked yet: open the instance in the official Minecraft Launcher instead.
+  if (!(await api.accounts()).length) {
+    status[id] = 'Preparing…'; playButton()
+    try { const r = await api.playOfficial(id); toast(r.launched ? `Opened Minecraft Launcher — pick "${r.profile}" and press Play` : `Added "${r.profile}" to the Minecraft Launcher`) }
+    finally { delete status[id]; playButton() }
+    return
+  }
   status[id] = 'Preparing…'; playButton()
   try { await api.play(id); running.add(id) } finally { if (!running.has(id)) delete status[id]; playButton() }
 })
@@ -440,7 +447,7 @@ function applyLook(l) {
 }
 const lookFrom = f => ({ theme: f.elements.theme.value || 'midnight', accent: f.elements.accent.value || $('#accentPick').value, density: f.elements.density.value || 'comfy',
   scale: +f.elements.scale.value || 100, motion: f.elements.motion.checked, descs: f.elements.descs.checked })
-async function openSettings() {
+async function openSettings(section = 'appearance') {
   const s = await api.getSettings(), f = $('#settingsForm'), el = f.elements
   el.curseforgeKey.value = s.curseforgeKey || ''; el.nexusKey.value = s.nexusKey || ''; el.nxmHandler.checked = !!s.nxmHandler
   el.msClientId.value = s.msClientId || ''; el.autoStart.checked = !!s.autoStart; el.autoUpdate.checked = s.autoUpdate !== false; el.rememberLast.checked = s.rememberLast !== false
@@ -448,13 +455,13 @@ async function openSettings() {
   el.theme.value = look.theme; el.density.value = look.density; el.scale.value = look.scale; el.motion.checked = look.motion; el.descs.checked = look.descs
   el.accent.value = look.accent; $('#accentPick').value = look.accent; $('#scaleOut').textContent = look.scale + '%'
   $('#login').hidden = true; showAccounts(); showPlayit(); lookSaved = false
-  setSection('appearance'); $('#settingsDlg').showModal()
+  setSection(section); $('#settingsDlg').showModal(); if (section === 'setup') showSetup()
 }
 const setSection = sec => {
   document.querySelectorAll('.setnav [data-sec]').forEach(b => b.classList.toggle('on', b.dataset.sec === sec))
   document.querySelectorAll('.setbody section').forEach(x => x.hidden = x.dataset.sec !== sec)
 }
-$('.setnav').onclick = e => { const b = e.target.closest('[data-sec]'); if (b) setSection(b.dataset.sec) }
+$('.setnav').onclick = e => { const b = e.target.closest('[data-sec]'); if (b) setSection(b.dataset.sec), b.dataset.sec === 'setup' && showSetup() }
 $('#settingsForm').addEventListener('input', e => {
   if (e.target.id === 'accentPick') $('#settingsForm').elements.accent.forEach(r => r.checked = false)
   if (e.target.closest('[data-sec=appearance]')) { const l = lookFrom($('#settingsForm')); $('#scaleOut').textContent = l.scale + '%'; applyLook(l) }
@@ -837,6 +844,36 @@ async function backgroundUpdates() {
 setTimeout(() => backgroundUpdates(), 8000)
 setInterval(() => backgroundUpdates(), 6 * 3600e3)
 
+// ---- Setup checklist ----
+async function showSetup() {
+  $('#setupList').innerHTML = '<div class="skel"></div>'
+  const s = await api.setupStatus(), gh = `https://github.com/${s.repo}`
+  const items = [
+    { ok: s.releases, need: true, title: 'Friends can download the app and get updates', why: 'The GitHub repository must be public so the download page and automatic updates work.',
+      steps: ['Open the repository settings', 'Scroll to "Danger Zone" → "Change visibility" → Public'], btn: ['Open settings', `${gh}/settings`] },
+    { ok: s.pages, need: true, title: 'Invite links open the app', why: 'Invite links go through a small web page that GitHub Pages hosts for free.',
+      steps: ['Open Pages settings', 'Source: "Deploy from a branch"', 'Branch: claude/sweet-wozniak-yvq2af, folder /docs → Save', 'Wait about a minute, then press Check again'], btn: ['Open Pages settings', `${gh}/settings/pages`] },
+    { ok: s.minecraftLauncher || s.msLogin, need: true, title: 'Play Minecraft', why: s.msLogin ? 'Signed in with Microsoft: Play starts the game from this app.' : 'Play opens your instance in the official Minecraft Launcher (install it once from minecraft.net).',
+      steps: ['Install the Minecraft Launcher and sign in once'], btn: ['Get the launcher', 'https://www.minecraft.net/download'] },
+    { ok: s.msLogin, title: 'Start Minecraft directly from this app (optional)', why: 'Needs your own Microsoft app ID approved by Mojang. Until then Play uses the official launcher.',
+      steps: ['portal.azure.com → App registrations → New: "Personal Microsoft accounts only"', 'Authentication → allow public client flows = Yes', 'Request Minecraft access at aka.ms/mce-reviewappid (takes days)', 'Paste the Application (client) ID in Accounts and press Add Microsoft account'], btn: ['Open Azure', 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade'], go: 'accounts' },
+    { ok: s.playit, title: 'Stable server address + Bedrock/voice chat (optional)', why: 'Link a free playit.gg account. Without it servers use bore.pub (Java only).', steps: ['Press Link, approve in the browser'], go: 'accounts', goLabel: 'Link playit.gg' },
+    { ok: s.curseforge, title: 'CurseForge mods (optional)', why: 'Free API key from CurseForge.', steps: ['Create a key at console.curseforge.com', 'Paste it in Mod sites'], btn: ['Get a key', 'https://console.curseforge.com/'], go: 'sites' },
+    { ok: s.nexus, title: 'Nexus Mods downloads (optional)', why: 'Your personal Nexus API key.', steps: ['Nexus → Account → API access → copy key', 'Paste it in Mod sites'], btn: ['Open Nexus', 'https://www.nexusmods.com/users/myaccount?tab=api'], go: 'sites' },
+    { ok: s.github, title: 'Live share for friends (optional)', why: 'A GitHub token with only "gist" access lets friends follow your mod list.', steps: ['Create the token', 'Paste it in Mod sites'], btn: ['Create token', 'https://github.com/settings/tokens/new?scopes=gist&description=Mod%20Manager'], go: 'sites' },
+  ]
+  const left = setupLeft = items.filter(i => i.need && !i.ok).length; render()
+  $('#setupLeft').textContent = left || ''
+  $('#setupList').innerHTML = items.map(i => `<div class="setup ${i.ok ? 'done' : i.need ? 'todo' : ''}">
+    <span class="sdot">${i.ok ? ic('check') : i.ok === null ? ic('alert') : ''}</span>
+    <div><b>${esc(i.title)}</b>${i.need && !i.ok ? ' <span class="tag upd">Needed</span>' : ''}<p class="muted small">${esc(i.why)}</p>
+      ${i.ok ? '' : `<ol>${i.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>`}</div>
+    ${i.ok ? '' : `<div class="sbtns">${i.btn ? `<button type="button" class="primary" data-href="${esc(i.btn[1])}">${esc(i.btn[0])}</button>` : ''}${i.go ? `<button type="button" data-go="${i.go}">${esc(i.goLabel || 'Go there')}</button>` : ''}</div>`}</div>`).join('')
+}
+$('#setupList').onclick = e => { const g = e.target.closest('[data-go]')?.dataset.go; if (g) setSection(g), g === 'accounts' && showPlayit() }
+$('#setupRecheck').onclick = showSetup
+$('#startSetup').onclick = () => openSettings('setup')
+
 // ---- Keyboard shortcuts + quick switcher ----
 document.addEventListener('keydown', e => {
   if (!(e.ctrlKey || e.metaKey) || document.querySelector('dialog[open]:not(#quickDlg)')) return
@@ -870,7 +907,7 @@ api.getSettings().then(s => {
   look = { ...LOOK, ...Object.fromEntries(Object.keys(LOOK).filter(k => s[k] !== undefined).map(k => [k, s[k]])) }
   if (!('accent' in s) && s.theme === 'dark') look.theme = 'midnight' // old default -> new darker default
   applyLook(look); remembering = s.rememberLast !== false
-}).finally(() => refresh())
+}).finally(() => refresh().then(() => { if (!$('#settingsDlg').open) api.setupStatus().then(s => { setupLeft = [s.releases, s.pages, s.minecraftLauncher || s.msLogin].filter(x => x === false).length; render() }).catch(() => {}) }))
 
 // ---- Bulk actions, orphans, crash helper, download queue ----
 async function bulkAction(kind) {
