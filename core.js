@@ -117,7 +117,16 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const mf = (p, m, rel) => inside(mbase(p, m), rel)
   const stageKey = (src, id) => `${src}-${id}`.replace(/[^\w.-]/g, '_').slice(0, 120)
   const load = id => JSON.parse(fs.readFileSync(path.join(dir(id), 'profile.json'), 'utf8'))
-  const save = p => (writeAtomic(path.join(dir(p.id), 'profile.json'), JSON.stringify(p, null, 1)), p)
+  const save = p => {
+    writeAtomic(path.join(dir(p.id), 'profile.json'), JSON.stringify(p, null, 1))
+    // Live share owners: push mod list changes to friends automatically (debounced) instead of pressing Update.
+    if (p.publish && p.publishRev && settings().githubToken && shareRev(p) !== p.publishRev) {
+      clearTimeout(autoPub[p.id]); autoPub[p.id] = setTimeout(() => serial(publishGist)(p.id).then(() => emit('published', { pid: p.id }), () => {}), 5000)
+    }
+    return p
+  }
+  const autoPub = {}
+  const shareRev = p => crypto.createHash('sha1').update(JSON.stringify(shareData(p))).digest('hex')
   const ctx = { files, settings, dataDir: path.join(root, '..') }
   const S = Object.fromEntries(Object.keys(ID).map(k => [k, require(`./sources/${k}`)(ctx)]))
   const srcOf = (p, m) => m.src || SOURCES[p.type][0]
@@ -322,20 +331,35 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   // Share code (MM1…), r2modman key, or gist:<id> -> validated share data.
   async function parseShare(input) {
     input = String(input).trim()
-    let d, cfg = {}, rev
+    let d, cfg = {}, rev, owner
     if (input.startsWith('gist:')) {
       const g = await json(`https://api.github.com/gists/${q(input.slice(5))}`, { accept: 'application/vnd.github+json' })
       const f = g.files?.['modmanager.json']
       if (!f) throw new Error('Not a Mod Manager live share')
       const text = f.truncated ? await (await get(f.raw_url)).text() : f.content
-      d = JSON.parse(text); rev = crypto.createHash('sha1').update(text).digest('hex')
+      d = JSON.parse(text); rev = crypto.createHash('sha1').update(text).digest('hex'); owner = g.owner?.login
     } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input)) {
       const r = await fetchR2(input); d = r.d; cfg = r.cfg
     } else {
       try { d = JSON.parse(zlib.inflateRawSync(Buffer.from(input.replace(/^MM1/, ''), 'base64url'))) } catch { throw new Error('Invalid share code') }
     }
     if (!validData(d)) throw new Error('Invalid share code')
-    return { d, cfg, rev }
+    return { d, cfg, rev, owner }
+  }
+  // Live share via a public GitHub Gist (listed on the owner's site page): needs a token with "gist" scope; friends only read,
+  // so only the owner can change what followers get.
+  async function publishGist(pid) {
+    const p = load(pid), token = settings().githubToken
+    if (p.follow) throw new Error(`Only ${p.follow.owner || 'the owner'} can update this pack. Unfollow it to share your own version.`)
+    if (!token) throw new Error('Add a GitHub token (gist scope) in Settings to live-share')
+    const body = JSON.stringify({ description: `Mod Manager: ${p.name}`, public: true, files: { 'modmanager.json': { content: JSON.stringify(shareData(p)) } } })
+    const headers = { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' }
+    const r = p.publish
+      ? await json(`https://api.github.com/gists/${q(p.publish)}`, headers, { method: 'PATCH', body }).catch(e => e.status === 404 ? null : Promise.reject(e))
+      : null
+    const g = r || await json('https://api.github.com/gists', headers, { method: 'POST', body })
+    const cur = load(pid) // re-read: mods may have changed while uploading
+    return save({ ...cur, publish: g.id, publishUser: g.owner?.login || p.publishUser, publishRev: shareRev(p) })
   }
   async function syncData(pid, d, drop, cfg = {}) {
     let p = load(pid)
@@ -659,7 +683,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serial = fn => (...a) => { const r = chain.then(() => fn(...a)); chain = r.catch(() => {}); return r }
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
-    'preview', 'checkFollow', 'publish', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
+    'preview', 'checkFollow', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
     'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
@@ -880,36 +904,27 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       return { name: d.n, type: d.t, game: d.g, gameName: d.gn, mc: d.mc, count: d.m.length, diff: p ? diff(p, d) : null }
     },
     sync: async (pid, input, { remove: drop } = {}) => {
-      const { d, cfg, rev } = await parseShare(input)
+      const { d, cfg, rev, owner } = await parseShare(input)
       snapshot(pid, 'Before syncing with a friend')
       const r = await syncData(pid, d, drop, cfg)
-      if (rev && r.profile.follow && `gist:${r.profile.follow.gist}` === String(input).trim()) r.profile = save({ ...r.profile, follow: { ...r.profile.follow, rev } })
+      if (rev && r.profile.follow && `gist:${r.profile.follow.gist}` === String(input).trim()) r.profile = save({ ...r.profile, follow: { ...r.profile.follow, rev, owner: owner || r.profile.follow.owner } })
       return r
     },
 
-    // Live share via a public GitHub Gist (listed on the publisher's site profile): needs a token with "gist" scope; friends only read.
-    publish: async pid => {
-      const p = load(pid), token = settings().githubToken
-      if (!token) throw new Error('Add a GitHub token (gist scope) in Settings to live-share')
-      const body = JSON.stringify({ description: `Mod Manager: ${p.name}`, public: true, files: { 'modmanager.json': { content: JSON.stringify(shareData(p)) } } })
-      const headers = { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' }
-      const r = p.publish
-        ? await json(`https://api.github.com/gists/${q(p.publish)}`, headers, { method: 'PATCH', body }).catch(e => e.status === 404 ? null : Promise.reject(e))
-        : null
-      const g = r || await json('https://api.github.com/gists', headers, { method: 'POST', body })
-      return save({ ...p, publish: g.id, publishUser: g.owner?.login || p.publishUser })
-    },
+    publish: pid => publishGist(pid),
+    // Followers keep their own changes: stop following, the profile becomes a normal one.
+    unfollow: pid => { const p = load(pid); delete p.follow; return save(p) },
     follow: async (gist, name) => {
-      const { d, rev } = await parseShare(`gist:${gist}`)
+      const { d, rev, owner } = await parseShare(`gist:${gist}`)
       const res = await importData(d, name)
-      res.profile = save({ ...load(res.profile.id), follow: { gist, rev } })
+      res.profile = save({ ...load(res.profile.id), follow: { gist, rev, owner } })
       return res
     },
     checkFollow: async pid => {
       const p = load(pid)
       if (!p.follow) return null
-      const { d, rev } = await parseShare(`gist:${p.follow.gist}`)
-      return { changed: rev !== p.follow.rev, diff: diff(p, d) }
+      const { d, rev, owner } = await parseShare(`gist:${p.follow.gist}`)
+      return { changed: rev !== p.follow.rev, diff: diff(p, d), owner: owner || p.follow.owner }
     },
 
     // Reads the newest crash report / log and points at installed mods it mentions.

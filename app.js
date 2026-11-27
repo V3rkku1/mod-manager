@@ -176,13 +176,17 @@ function showInstalled() {
     || `<div class="hint">${ic('package')}<b>No mods yet</b><span>Find some in Browse.</span></div>`)
   banners()
 }
+const diffText = d => [d.add.length && `+${d.add.length} new`, d.change.length && `${d.change.length} changed (${esc(d.change.slice(0, 3).join(', '))}${d.change.length > 3 ? '…' : ''})`,
+  d.remove.length && `-${d.remove.length} removed (${esc(d.remove.slice(0, 3).join(', '))}${d.remove.length > 3 ? '…' : ''})`].filter(Boolean).join(' · ')
 // Conflicts + "friend updated the pack" banners above the installed list.
 async function banners() {
   const id = cur.id, [c, f] = await Promise.all([api.conflicts(id).catch(() => []), cur.follow ? api.checkFollow(id).catch(() => null) : null])
   if (cur?.id !== id || tab !== 'installed') return
   const d = f?.diff, n = d ? d.add.length + d.change.length + d.remove.length : 0
   $('#banners').innerHTML = (c.length ? `<div class="banner warn">${ic('alert')}<div><b>${c.length} conflict${c.length > 1 ? 's' : ''}</b>${c.slice(0, 4).map(x => `<p>${x.type === 'file' ? `${esc(x.mods.join(' + '))} both write <code>${esc(x.file)}</code> — <b>${esc(x.winner)}</b> wins ${x.ids.slice(0, -1).map((id, i) => `<button class="linkish" data-win="${esc(id)}" data-after="${esc(x.ids.at(-1))}">Use ${esc(x.mods[i])}</button>`).join(' ')}` : `${esc(x.mods.join(' and '))} are incompatible`}</p>`).join('')}<small class="muted">Lower in the list wins. Change order with these buttons, then Deploy.</small></div></div>` : '')
-    + (n ? `<div class="banner">${ic('refresh')}<div><b>Your friend updated this pack</b><p>+${d.add.length} new · ${d.change.length} changed · -${d.remove.length} removed</p></div><button class="primary" id="syncFollow">Sync now</button></div>` : '')
+    + (n ? `<div class="banner${f.changed ? '' : ' warn'}">${ic('refresh')}<div><b>${f.changed ? `${esc(f.owner || 'Your friend')} updated this pack` : `You changed ${esc(f.owner || 'your friend')}'s pack`}</b>
+      <p>${diffText(d)}</p>${f.changed ? '' : '<p>Only the owner can change the shared list. Sync puts it back, or unfollow to keep your changes.</p>'}</div>
+      ${f.changed ? '' : '<button id="unfollow">Unfollow</button>'}<button class="primary" id="syncFollow">Sync now</button></div>` : '')
 }
 
 async function checkUpdates(quiet) {
@@ -258,6 +262,7 @@ $('#list').onclick = async e => {
   const bk = e.target.closest('[data-bulk]')?.dataset.bulk
   if (bk) return bulkAction(bk)
   const w = e.target.closest('[data-win]'); if (w) { const p = await run(() => api.moveMod(cur.id, w.dataset.win, w.dataset.after)); if (p) setProfile(p), showInstalled(), toast('Order changed — Deploy to apply'); return }
+  if (e.target.id === 'unfollow') return confirm('Stop following? The pack stays, with your changes, and no longer gets your friend\'s updates.') && run(async () => { setProfile(await api.unfollow(cur.id)); render(); toast('Unfollowed — this pack is yours now') })
   if (e.target.id === 'syncFollow') return run(async () => { e.target.disabled = true; const r = await api.sync(cur.id, `gist:${cur.follow.gist}`, { remove: true }); setProfile(r.profile); render(); toast(r.failed.length ? `Synced, ${r.failed.length} failed` : 'Synced with your friend', !!r.failed.length) })
   const el = e.target.closest('.mod'); if (!el || tab === 'server') return
   const modId = el.dataset.id, src = el.dataset.src
@@ -394,6 +399,12 @@ $('#play').onclick = () => run(async () => {
   const id = cur.id
   if (cur.type !== 'modrinth') { await deploy(); await api.launch(id); return toast('Mods deployed — starting game') }
   if (running.has(id)) return api.stop(id)
+  // Followed pack: offer the friend's latest mod list first, so everyone joins with the same mods.
+  const f = cur.follow && await api.checkFollow(id).catch(() => null)
+  if (f?.changed && confirm(`${f.owner || 'Your friend'} updated this pack (${diffText(f.diff).replace(/&#\d+;/g, '')}). Sync before playing?`)) {
+    status[id] = 'Syncing…'; playButton()
+    try { const r = await api.sync(id, `gist:${cur.follow.gist}`, { remove: true }); setProfile(r.profile) } finally { delete status[id]; playButton() }
+  }
   // No Microsoft account linked: play through the launcher picked in Settings (official Minecraft Launcher by default).
   if (!(await api.accounts()).length) {
     status[id] = 'Preparing…'; playButton()
@@ -413,8 +424,12 @@ document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => b.close
 $('#share').onclick = () => run(async () => {
   $('#code').value = await api.exportCode(cur.id)
   $('#invite').value = LINK + 'import/' + $('#code').value
-  $('#live').value = cur.publish ? LINK + 'follow/' + cur.publish : ''
-  $('#makeLive').lastChild.textContent = cur.publish ? ' Update' : ' Publish'; $('[data-copy=live]').hidden = !cur.publish; profileLink()
+  // Followed pack: pass on the owner's link; only the owner can publish changes.
+  const gid = cur.follow?.gist || cur.publish
+  $('#live').value = gid ? LINK + 'follow/' + gid : ''
+  $('#makeLive').hidden = !!cur.follow; $('#liveNote').textContent = cur.follow ? `Only ${cur.follow.owner || 'the owner'} can change this pack. Friends you send this link follow them too.`
+    : cur.publish ? 'Mod changes reach your friends automatically.' : ''
+  $('#makeLive').lastChild.textContent = cur.publish ? ' Update' : ' Publish'; $('[data-copy=live]').hidden = !gid; profileLink()
   $('#r2code').value = ''; $('[data-copy=r2code]').hidden = true; $('#makeR2').hidden = false
   $('.tsOnly').hidden = cur.type !== 'thunderstore'
   $('#shareDlg').showModal(); $('#code').select()
@@ -427,7 +442,7 @@ $('#makeLive').onclick = async () => {
   const b = $('#makeLive'); b.disabled = true
   const np = await run(() => api.publish(cur.id)); b.disabled = false
   if (!np) return
-  setProfile(np); $('#live').value = LINK + 'follow/' + cur.publish; $('[data-copy=live]').hidden = false; b.lastChild.textContent = ' Update'; profileLink()
+  setProfile(np); $('#liveNote').textContent = 'Mod changes reach your friends automatically.'; $('#live').value = LINK + 'follow/' + cur.publish; $('[data-copy=live]').hidden = false; b.lastChild.textContent = ' Update'; profileLink()
   toast('Live share updated — friends see a Sync button')
 }
 const profileLink = () => { const a = $('#myPage'); a.hidden = !cur.publishUser; a.dataset.href = SITE + '#u/' + cur.publishUser }
@@ -597,6 +612,7 @@ window.onEvent?.((e, d) => {
     if (cur?.id === d.pid) playButton()
   }
   if (e === 'dl') dlUpdate(d)
+  if (e === 'published') toast('Your friends got the updated mod list')
   if ((e === 'slog' || e === 'sstatus') && cur?.id === d.pid && tab === 'server') e === 'slog' ? appendTo($('#slog'), d.line) : srvTab !== 'settings' && showServer()
   if (e === 'log' && cur?.id === d.pid && tab === 'logs' && $('#logsel')?.value === 'live') appendLog(d.line)
 })
@@ -841,11 +857,14 @@ $('#favs').onclick = () => { favMode = !favMode; $('#favs').classList.toggle('on
 async function backgroundUpdates() {
   let total = 0
   for (const p of profiles) {
-    if (!p.mods.some(m => m.src !== 'local')) continue
+    if (!p.mods.some(m => m.src !== 'local') || p.follow) continue // followed packs get versions from the owner
     const r = await api.checkUpdates(p.id).catch(() => null)
     if (!r) continue
     updates[p.id] = r; total += Object.keys(r).length
   }
+  const friends = []
+  for (const p of profiles.filter(p => p.follow)) if ((await api.checkFollow(p.id).catch(() => null))?.changed) friends.push(p.name)
+  if (friends.length) try { new Notification('Mod Manager', { body: `Your friend updated ${friends.join(', ')}. Open it and press Sync now.`, silent: true }) } catch {}
   render()
   if (total) try { new Notification('Mod Manager', { body: `${total} mod update${total === 1 ? '' : 's'} available`, silent: true }) } catch {}
 }

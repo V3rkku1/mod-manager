@@ -4,7 +4,7 @@ const names = ['listProfiles', 'createProfile', 'updateProfile', 'deleteProfile'
   'deploy', 'findGame', 'launch', 'exportCode', 'exportR2', 'exportFile', 'importFile', 'importCode', 'handleNxm',
   'accounts', 'loginStart', 'loginFinish', 'setActiveAccount', 'removeAccount', 'running', 'getLog', 'stop', 'play', 'repair',
   'worlds', 'logFiles', 'readLog', 'addLocal', 'exportMrpack', 'importInstance', 'duplicate', 'unlinkPack', 'splitPack', 'setAllDisabled', 'filters',
-  'updateMod', 'orphans', 'conflicts', 'preview', 'sync', 'publish', 'follow', 'checkFollow', 'analyzeCrash', 'javaList',
+  'updateMod', 'orphans', 'conflicts', 'preview', 'sync', 'publish', 'follow', 'unfollow', 'checkFollow', 'analyzeCrash', 'javaList',
   'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serverProps', 'setServerProps',
   'serverPlayers', 'playerAction', 'backups', 'backup', 'restoreBackup', 'deleteBackup',
   'setServerKind', 'setServerIcon', 'sha1Url', 'resetPlayer', 'pluginSearch', 'pluginInstall', 'pluginRemove', 'shareLog', 'updateLoader', 'diagnostics',
