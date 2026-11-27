@@ -851,12 +851,8 @@ setInterval(() => backgroundUpdates(), 6 * 3600e3)
 // ---- Setup checklist ----
 async function showSetup() {
   $('#setupList').innerHTML = '<div class="skel"></div>'
-  const s = await api.setupStatus(), gh = `https://github.com/${s.repo}`
+  const s = await api.setupStatus()
   const items = [
-    { ok: s.releases, need: true, title: 'Friends can download the app and get updates', why: 'The GitHub repository must be public so the download page and automatic updates work.',
-      steps: ['Open the repository settings', 'Scroll to "Danger Zone" → "Change visibility" → Public'], btn: ['Open settings', `${gh}/settings`] },
-    { ok: s.pages, need: true, title: 'Invite links open the app', why: 'Invite links go through a small web page that GitHub Pages hosts for free.',
-      steps: ['Open Pages settings', 'Source: "Deploy from a branch"', 'Branch: claude/sweet-wozniak-yvq2af, folder /docs → Save', 'Wait about a minute, then press Check again'], btn: ['Open Pages settings', `${gh}/settings/pages`] },
     { ok: s.minecraftLauncher || s.msLogin, need: true, title: 'Play Minecraft', why: s.msLogin ? 'Signed in with Microsoft: Play starts the game from this app.' : 'Play opens your instance in the official Minecraft Launcher (install it once from minecraft.net).',
       steps: ['Install the Minecraft Launcher and sign in once'], btn: ['Get the launcher', 'https://www.minecraft.net/download'] },
     { ok: s.msLogin, title: 'Start Minecraft directly from this app (optional)', why: 'Needs your own Microsoft app ID approved by Mojang. Until then Play uses the official launcher.',
@@ -911,7 +907,7 @@ api.getSettings().then(s => {
   look = { ...LOOK, ...Object.fromEntries(Object.keys(LOOK).filter(k => s[k] !== undefined).map(k => [k, s[k]])) }
   if (!('accent' in s) && s.theme === 'dark') look.theme = 'midnight' // old default -> new darker default
   applyLook(look); remembering = s.rememberLast !== false
-}).finally(() => refresh().then(() => { if (!$('#settingsDlg').open) api.setupStatus().then(s => { setupLeft = [s.releases, s.pages, s.minecraftLauncher || s.msLogin].filter(x => x === false).length; render() }).catch(() => {}) }))
+}).finally(() => refresh().then(() => { if (!$('#settingsDlg').open) api.setupStatus().then(s => { setupLeft = s.minecraftLauncher || s.msLogin ? 0 : 1; render() }).catch(() => {}) }))
 
 // ---- Bulk actions, orphans, crash helper, download queue ----
 async function bulkAction(kind) {

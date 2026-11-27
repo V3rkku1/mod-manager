@@ -4,13 +4,7 @@ The app shows the same list under **Settings (gear) → Setup**, with buttons th
 
 ## Needed
 
-1. **Repository public**: already done. Friends can download the app from Releases and get automatic updates.
-2. **Invite links (GitHub Pages)**, about 1 minute:
-   1. Open https://github.com/V3rkku1/mod-manager/settings/pages
-   2. Source: **Deploy from a branch**
-   3. Branch: **claude/sweet-wozniak-yvq2af**, folder **/docs**, then **Save**
-   4. Wait about a minute. https://v3rkku1.github.io/mod-manager/join.html should open.
-3. **Minecraft Launcher**: install it from https://www.minecraft.net/download and sign in once.
+1. **Minecraft Launcher**: install it from https://www.minecraft.net/download and sign in once.
    With no Microsoft account linked in the app, **Play** puts your modded instance into the official launcher as a profile, and you press Play there.
 
 ## Optional

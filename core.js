@@ -1146,10 +1146,8 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     },
     // Setup checklist: what still needs doing for every feature to work.
     setupStatus: async () => {
-      const s = settings(), repo = require('./package.json').build?.publish
-      const ok = async u => { try { const r = await fetch(u, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(10e3) }); return r.status < 400 } catch { return null } }
-      const [releases, pages] = repo ? await Promise.all([ok(`https://github.com/${repo.owner}/${repo.repo}/releases/latest`), ok(`https://${repo.owner.toLowerCase()}.github.io/${repo.repo}/join.html`)]) : [null, null]
-      return { repo: repo && `${repo.owner}/${repo.repo}`, releases, pages, msLogin: readAccounts().length > 0, msClientId: !!s.msClientId, playit: !!playitSecret(),
+      const s = settings()
+      return { msLogin: readAccounts().length > 0, msClientId: !!s.msClientId, playit: !!playitSecret(),
         curseforge: !!s.curseforgeKey, nexus: !!s.nexusKey, github: !!s.githubToken, minecraftLauncher: fs.existsSync(path.join(minecraftDir(), 'launcher_profiles.json')) }
     },
 
