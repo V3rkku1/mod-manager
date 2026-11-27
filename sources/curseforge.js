@@ -65,6 +65,7 @@ module.exports = ({ files, settings }) => {
       }
     },
 
+    changelog: async (p, id, vid) => { const h = await api(`/mods/${q(id)}/files/${q(vid)}/changelog`); return h ? { html: h } : null },
     url: (p, id) => `https://www.curseforge.com/projects/${id}`,
   }
 }

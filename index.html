@@ -91,12 +91,14 @@
     <main>
       <header>
         <svg class="i hd"><use href="#i-compass"/></svg><b id="title">Browse</b>
+        <button id="favs" class="icon box" title="Favorites"><svg class="i"><use href="#i-star"/></svg></button>
         <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="q" type="search" placeholder="Search mods" autocomplete="off"></div>
         <select id="src"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select>
         <select id="kind"><option value="mod">Mods</option><option value="modpack">Modpacks</option><option value="resourcepack">Resource packs</option><option value="shader">Shaders</option><option value="following">Following</option></select>
         <select id="section" title="Section" hidden></select>
         <select id="env" title="Environment"><option value="">Any side</option><option value="client">Client</option><option value="server">Server</option></select>
         <select id="sort"><option value="popular">Popular</option><option value="updated">Recently updated</option><option value="newest">Newest</option><option value="rated">Top rated</option></select>
+        <button id="history" title="Snapshots: roll the whole mod list back"><svg class="i"><use href="#i-refresh"/></svg> History</button>
         <button id="allOff" title="Turn every mod off or on (then Deploy / Play)"><svg class="i"><use href="#i-x"/></svg> Disable all</button>
         <button id="addFiles" title="Add mod files from your computer (or drag and drop)"><svg class="i"><use href="#i-plus"/></svg> Add files</button>
         <input type="file" id="fileInput" multiple hidden>
@@ -245,6 +247,11 @@
     </div>
   </form>
 </dialog>
+
+<dialog id="histDlg"><button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
+  <h2>Mod list history</h2><p class="muted center">Snapshots are taken before Update all, syncing and big removals. Restoring re-downloads those exact versions.</p>
+  <div id="histList"></div><menu><button type="button" id="snapNow">Save snapshot now</button><button type="button" class="primary" data-close>Close</button></menu></dialog>
+<dialog id="chgDlg"><button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button><h2 id="chgTitle">What's new</h2><div id="chgBody" class="desc"></div></dialog>
 
 <dialog id="quickDlg"><input id="quickQ" placeholder="Jump to a profile…" autocomplete="off"><div id="quickList"></div></dialog>
 

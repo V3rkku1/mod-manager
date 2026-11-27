@@ -40,6 +40,14 @@ Build locally: `npm run dist` (installer needs Windows or Wine; `npx electron-bu
    - *Code with configs* (Thunderstore): uploads your BepInEx configs; also works in r2modman.
    - *Save as file* (`.mmpack`): mods + configs, send the file.
 
+## Safety & convenience
+
+- History (Installed tab): snapshots of the mod list before Update all, syncing and bulk removals; restore re-downloads those exact versions.
+- Failed updates keep the old version; removing a mod shows Undo.
+- "What's new" changelog before updating (Modrinth, Thunderstore, CurseForge), also per version in mod details.
+- Favorites (star on any mod, star button next to search).
+- Background update check every 6 hours with badges on the profile icons and a desktop notification.
+
 ## Customize
 
 Settings (gear, or Ctrl+,) has sections: Appearance, Accounts, Minecraft, Mod sites, App.

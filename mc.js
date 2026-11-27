@@ -34,7 +34,7 @@ module.exports = base => {
     const data = await bytes(url)
     if (hash && crypto.createHash('sha1').update(data).digest('hex') !== hash) throw new Error(`Checksum mismatch: ${path.basename(file)}`)
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file, data)
+    fs.writeFileSync(file + '.part', data); fs.renameSync(file + '.part', file)
   }
 
   const versions = async () => (manifest ??= await json(MANIFEST)).versions

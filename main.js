@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Tray, Menu, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Tray, Menu, nativeImage, screen } = require('electron')
 const path = require('path')
 const { autoUpdater } = require('electron-updater')
 
@@ -24,6 +24,7 @@ app.whenReady().then(() => {
   nxmProtocol(!!core.getSettings().nxmHandler)
   // Share links: modmanager://import/<code> and modmanager://follow/<gist id>
   if (app.isPackaged) app.setAsDefaultProtocolClient('modmanager')
+  global.mmCore = core
   for (const [k, fn] of Object.entries(core)) ipcMain.handle(k, async (_, ...a) => {
     try { return await fn(...a) } catch (e) { if (e.open) shell.openExternal(e.open); throw e }
   })
@@ -44,6 +45,8 @@ app.whenReady().then(() => {
   // Window size/position is remembered between runs.
   const boundsFile = path.join(app.getPath('userData'), 'window.json')
   let bounds = {}; try { bounds = JSON.parse(require('fs').readFileSync(boundsFile, 'utf8')) } catch {}
+  // Monitor unplugged since last run: forget the position so the window isn't off-screen.
+  if (bounds.x !== undefined && !screen.getAllDisplays().some(d => { const a = d.workArea; return bounds.x < a.x + a.width - 50 && bounds.x + bounds.width > a.x + 50 && bounds.y >= a.y - 10 && bounds.y < a.y + a.height - 50 })) delete bounds.x, delete bounds.y
   win = new BrowserWindow({
     width: 1280, height: 800, ...bounds, minWidth: 940, minHeight: 580, backgroundColor: '#0f1012', show: false,
     icon: path.join(__dirname, 'build/icon.png'),
@@ -83,3 +86,13 @@ app.whenReady().then(() => {
   if (app.isPackaged && core.getSettings().autoUpdate !== false) check(), setInterval(check, 3600e3)
 })
 app.on('window-all-closed', () => app.quit())
+// Quitting with servers running (e.g. from the taskbar): stop them cleanly so worlds are saved and synced.
+let stopping = false
+app.on('before-quit', e => {
+  const core = global.mmCore
+  if (stopping || !core?.serversRunning().length) return
+  e.preventDefault(); stopping = true; quitting = true
+  core.serversRunning().forEach(id => { try { core.serverStop(id) } catch {} })
+  const t = setInterval(() => { if (!core.serversRunning().length) clearInterval(t), app.quit() }, 500)
+  setTimeout(() => app.exit(0), 60000)
+})

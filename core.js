@@ -17,6 +17,8 @@ const CONFIG_DIR = { thunderstore: 'BepInEx/config', modrinth: 'config', terrari
 // tModLoader keeps mods in Documents (or OneDrive Documents) on Windows.
 const tmlDir = () => [path.join(os.homedir(), 'Documents'), path.join(os.homedir(), 'OneDrive', 'Documents')]
   .map(d => path.join(d, 'My Games', 'Terraria', 'tModLoader')).find(d => fs.existsSync(d))
+// Write to a temp file then rename, so a crash never leaves half-written JSON.
+const writeAtomic = (file, text) => { fs.writeFileSync(file + '.tmp', text); fs.renameSync(file + '.tmp', file) }
 const url = s => typeof s === 'string' && (s.startsWith('https://') || (/^data:image\/(png|jpeg|webp);base64,/.test(s) && s.length < 400e3)) ? s : undefined
 const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 
@@ -52,7 +54,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const dir = id => inside(root, id)
   const files = p => path.join(dir(p.id), 'files')
   const load = id => JSON.parse(fs.readFileSync(path.join(dir(id), 'profile.json'), 'utf8'))
-  const save = p => (fs.writeFileSync(path.join(dir(p.id), 'profile.json'), JSON.stringify(p, null, 1)), p)
+  const save = p => (writeAtomic(path.join(dir(p.id), 'profile.json'), JSON.stringify(p, null, 1)), p)
   const ctx = { files, settings, dataDir: path.join(root, '..') }
   const S = Object.fromEntries(Object.keys(ID).map(k => [k, require(`./sources/${k}`)(ctx)]))
   const srcOf = (p, m) => m.src || SOURCES[p.type][0]
@@ -87,10 +89,30 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     return save(p)
   }
   // Install (or switch to) a version; returns the profile with transient warnings.
-  const install = async (pid, src, id, vid, nxm) => {
-    if (load(pid).mods.some(m => m.id === id)) uninstall(pid, id)
-    const p = load(pid), warn = await installMod(p, src, id, vid, true, nxm)
-    return { ...p, warn }
+  // Replacing a mod keeps the old files aside until the new version is in, so a failed download never loses the mod.
+  const install = async (pid, src, id, vid, nxm, deps = true) => {
+    const old = load(pid).mods.find(m => m.id === id)
+    if (!old) { const p = load(pid), warn = await installMod(p, src, id, vid, deps, nxm); return { ...p, warn } }
+    const p0 = load(pid), stash = path.join(dir(pid), '.stash'), moved = []
+    fs.rmSync(stash, { recursive: true, force: true })
+    for (const f of old.files) {
+      const from = inside(files(p0), f)
+      if (fs.existsSync(from)) { fs.mkdirSync(path.dirname(inside(stash, f)), { recursive: true }); fs.renameSync(from, inside(stash, f)); moved.push(f) }
+    }
+    save({ ...p0, mods: p0.mods.filter(m => m.id !== id) })
+    try {
+      const p = load(pid), warn = await installMod(p, src, id, vid, deps, nxm)
+      const m = p.mods.find(m => m.id === id)
+      if (m) for (const k of ['disabled', 'pinned', 'note', 'auto']) if (old[k] !== undefined) m[k] = old[k]
+      save(p)
+      for (const f of moved) if (!m?.files.includes(f)) remove(files(p), f) // tidy empty folders left by the old version
+      return { ...p, warn }
+    } catch (e) {
+      const p = load(pid)
+      for (const f of moved) { fs.mkdirSync(path.dirname(inside(files(p), f)), { recursive: true }); fs.renameSync(inside(stash, f), inside(files(p), f)) }
+      save({ ...p, mods: [...p.mods.filter(m => m.id !== id), old] })
+      throw e
+    } finally { fs.rmSync(stash, { recursive: true, force: true }) }
   }
 
   const configs = p => {
@@ -107,13 +129,13 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     const failed = []
     for (const [id, v, src = SOURCES[d.t][0]] of d.m) await installMod(p, src, id, v, false).catch(e => failed.push(`${id}: ${e.message}`))
     for (const [rel, data] of Object.entries(cfg)) write(files(p), rel, data), p.extra.push(rel)
-    if (d.s && p.type === 'modrinth' && /^[\w.-]+:\d+$/.test(d.s)) addServer(p, d.s)
+    if (d.s && p.type === 'modrinth' && /^[\w.-]+(:\d+)?$/.test(d.s)) addServer(p, d.s)
     save(p)
     return { profile: p, failed }
   }
 
   // r2modman-compatible profile codes (hosted by Thunderstore, includes configs).
-  const r2Yaml = p => `profileName: ${JSON.stringify(p.name)}\ngame: ${p.game}\nmods:\n` + p.mods.map(m => {
+  const r2Yaml = p => `profileName: ${JSON.stringify(p.name)}\ngame: ${p.game}\nmods:\n` + p.mods.filter(m => m.src !== 'local').map(m => {
     const [major = 0, minor = 0, patch = 0] = vidOf(m).split('.').map(Number)
     return `  - name: ${m.id}\n    version:\n      major: ${major}\n      minor: ${minor}\n      patch: ${patch}\n    enabled: ${!m.disabled}\n`
   }).join('')
@@ -133,7 +155,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     return { d: { n, t: 'thunderstore', g, m: mods }, cfg }
   }
 
-  const setSettingsRaw = patch => { const s = { ...settings(), ...patch }; fs.writeFileSync(settingsFile, JSON.stringify(s, null, 1)); return s }
+  const setSettingsRaw = patch => { const s = { ...settings(), ...patch }; writeAtomic(settingsFile, JSON.stringify(s, null, 1)); return s }
   const cleanLaunch = o => Object.fromEntries(Object.entries({
     maxMem: +o.maxMem || undefined, minMem: +o.minMem || undefined, width: +o.width || undefined, height: +o.height || undefined, fullscreen: !!o.fullscreen || undefined,
     java: o.java, args: o.args, jvmArgs: o.jvmArgs, env: o.env, preLaunch: o.preLaunch, wrapper: o.wrapper, postExit: o.postExit,
@@ -194,9 +216,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     for (const [id, v, src = SOURCES[d.t][0]] of d.m) {
       const m = load(pid).mods.find(m => m.id === id)
       if (m && vidOf(m) === v) continue
-      if (m) uninstall(pid, id)
-      p = load(pid)
-      await installMod(p, src, id, v, false).catch(e => failed.push(`${id}: ${e.message}`))
+      await install(pid, src, id, v, undefined, false).catch(e => failed.push(`${id}: ${e.message}`))
     }
     p = load(pid)
     for (const [rel, data] of Object.entries(cfg)) write(files(p), rel, data), p.extra.push(rel)
@@ -206,6 +226,18 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const addServer = (p, address) => {
     const f = path.join(p.target, 'servers.dat'), list = MC.readServers(f).filter(s => s.ip !== address)
     fs.mkdirSync(p.target, { recursive: true }); MC.writeServers(f, [{ name: `${p.name} (friend)`, ip: address }, ...list])
+  }
+  // Profile snapshots: the mod list (exact versions) + flags. Rollback re-downloads those versions, so snapshots stay tiny.
+  const snapDir = pid => path.join(dir(pid), 'snapshots')
+  function snapshot(pid, reason = 'Manual') {
+    const p = load(pid)
+    if (!p.mods.length) return null
+    const id = `${Date.now()}`
+    write(snapDir(pid), `${id}.json`, JSON.stringify({ time: Date.now(), reason: String(reason).slice(0, 80), data: shareData(p),
+      flags: Object.fromEntries(p.mods.map(m => [m.id, { disabled: m.disabled, pinned: m.pinned, note: m.note }])) }))
+    const all = fs.readdirSync(snapDir(pid)).filter(f => f.endsWith('.json')).sort()
+    for (const f of all.slice(0, -25)) fs.rmSync(path.join(snapDir(pid), f), { force: true })
+    return id
   }
   const isShaderPack = async data => { try { return Object.keys(unzipSync(data)).some(f => f.startsWith('shaders/')) } catch { return false } }
 
@@ -480,11 +512,12 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
     'preview', 'checkFollow', 'publish', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
-    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
-    listProfiles: () => fs.readdirSync(root).filter(d => fs.existsSync(path.join(root, d, 'profile.json'))).map(load),
+    // A damaged profile.json is skipped instead of breaking the whole list.
+    listProfiles: () => fs.readdirSync(root).filter(d => fs.existsSync(path.join(root, d, 'profile.json'))).flatMap(d => { try { return [load(d)] } catch { return [] } }),
     createProfile: create,
     updateProfile: (id, patch) => {
       const p = load(id)
@@ -495,7 +528,10 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       if (patch.launch) p.launch = cleanLaunch(patch.launch)
       return save(p)
     },
-    deleteProfile: id => fs.rmSync(dir(id), { recursive: true, force: true }),
+    deleteProfile: id => {
+      if (servers[id] || running[id]) throw new Error('Stop the game and server of this profile first')
+      fs.rmSync(dir(id), { recursive: true, force: true })
+    },
     // Secrets that only the main process needs are not sent to the window.
     getSettings: () => { const { playitSecret: _, ...s } = settings(); return s },
     setSettings: patch => {
@@ -528,15 +564,12 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     checkUpdates: async pid => {
       const p = load(pid)
       const latest = await Promise.all(p.mods.map(m => m.src === 'local' || m.pinned ? null : S[srcOf(p, m)].latest(p, m).catch(() => null)))
-      return Object.fromEntries(p.mods.map((m, i) => [m.id, latest[i]]).filter(([m, v], i) => v && v.vid !== vidOf(p.mods[i])).map(([id, v]) => [id, v.version]))
+      return Object.fromEntries(p.mods.map((m, i) => [m.id, latest[i]]).filter(([m, v], i) => v && v.vid !== vidOf(p.mods[i])).map(([id, v]) => [id, { version: v.version, vid: String(v.vid) }]))
     },
     update: async (pid, id) => {
       const was = load(pid).mods.find(m => m.id === id)
       if (!was) throw new Error('Mod not installed')
-      const p = await install(pid, srcOf(load(pid), was), id, null)
-      const m = p.mods.find(m => m.id === id)
-      if (m && was.disabled) m.disabled = true, save(p)
-      return p
+      return install(pid, srcOf(load(pid), was), id, null)
     },
 
     // Copy enabled mods + shared configs into the target folder; removes what the previous deploy put there first.
@@ -598,6 +631,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     },
     sync: async (pid, input, { remove: drop } = {}) => {
       const { d, cfg, rev } = await parseShare(input)
+      snapshot(pid, 'Before syncing with a friend')
       const r = await syncData(pid, d, drop, cfg)
       if (rev && r.profile.follow && `gist:${r.profile.follow.gist}` === String(input).trim()) r.profile = save({ ...r.profile, follow: { ...r.profile.follow, rev } })
       return r
@@ -662,17 +696,18 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         since: s?.since, log: s?.log || lastLogs[pid] || [], issues: s ? [] : lastIssues[pid] || [], opts: p.server || {}, kind: kindOf(p),
         icon: fs.existsSync(icon) ? 'data:image/png;base64,' + fs.readFileSync(icon).toString('base64') : null, ram: Math.round(os.totalmem() / 1048576) }
     },
-    serverCmd: (pid, cmd) => { servers[pid]?.child.stdin.write(String(cmd).replace(/\n/g, ' ') + '\n'); return true },
+    serverCmd: (pid, cmd) => { servers[pid]?.child?.stdin.write(String(cmd).replace(/\n/g, ' ') + '\n'); return true },
     serverStop: pid => {
       const s = servers[pid]; if (!s) return true
       s.stopping = true
+      if (!s.child) throw new Error('The server is still preparing — wait a moment')
       String(s.stopCmds || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).forEach(c => s.child.stdin.write(c + '\n'))
       s.child.stdin.write('stop\n'); return true
     },
     serversRunning: () => Object.keys(servers),
     serverStart: (pid, opts = {}) => startServer(pid, opts),
     serverRestart: async pid => {
-      const s = servers[pid]; if (!s) throw new Error('Server is not running')
+      const s = servers[pid]; if (!s?.child) throw new Error('Server is not running')
       s.restart = true; s.stopping = true; s.child.stdin.write('stop\n'); return true
     },
     setServerKind: (pid, kind) => {
@@ -843,6 +878,27 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       emit('sstatus', { pid })
       return s.address
     },
+    // Snapshots / rollback
+    snapshot: (pid, reason) => snapshot(pid, reason),
+    snapshots: pid => {
+      const d = snapDir(pid)
+      return fs.existsSync(d) ? fs.readdirSync(d).filter(f => /^\d+\.json$/.test(f)).sort().reverse().flatMap(f => {
+        try { const j = JSON.parse(fs.readFileSync(path.join(d, f), 'utf8')); return [{ id: f.slice(0, -5), time: j.time, reason: j.reason, count: j.data.m.length }] } catch { return [] }
+      }) : []
+    },
+    restoreSnapshot: async (pid, id) => {
+      if (!/^\d+$/.test(id)) throw new Error('Bad snapshot')
+      const j = JSON.parse(fs.readFileSync(path.join(snapDir(pid), `${id}.json`), 'utf8'))
+      if (!validData(j.data)) throw new Error('Snapshot is damaged')
+      snapshot(pid, 'Before rollback')
+      const r = await syncData(pid, j.data, true)
+      const p = load(pid)
+      for (const m of p.mods) Object.assign(m, Object.fromEntries(Object.entries(j.flags?.[m.id] || {}).filter(([, v]) => v !== undefined)))
+      return { ...r, profile: save(p) }
+    },
+    // Release notes for one version (fetched when the user opens them).
+    changelog: async (pid, src, id, vid) => S[src].changelog ? S[src].changelog(load(pid), id, vid) : null,
+
     // World sync API
     syncStatus: pid => {
       const p = load(pid), dir = syncDirOf(p)

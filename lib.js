@@ -3,8 +3,19 @@ const fs = require('fs'), path = require('path')
 const { unzipSync } = require('fflate')
 
 const UA = 'mod-manager/0.4'
-async function get(url, headers = {}, init = {}) {
-  const r = await fetch(url, { ...init, headers: { 'User-Agent': UA, ...headers } })
+// Retries network errors, 429 and 5xx with backoff; API calls time out after 60 s (big downloads don't).
+async function get(url, headers = {}, init = {}, tries = 4) {
+  let r
+  for (let i = 0; ; i++) {
+    try {
+      r = await fetch(url, { ...init, headers: { 'User-Agent': UA, ...headers } })
+      if ((r.status === 429 || r.status >= 500) && i < tries - 1) throw Object.assign(new Error(`HTTP ${r.status}`), { retry: true })
+      break
+    } catch (e) {
+      if (i >= tries - 1 || init.signal?.aborted && !e.retry) throw e.name === 'TimeoutError' ? new Error(`Timed out: ${url.split('?')[0]}`) : e
+      await new Promise(res => setTimeout(res, 500 * 2 ** i))
+    }
+  }
   if (!r.ok) {
     const e = new Error(`HTTP ${r.status} for ${url.split('?')[0]}`)
     e.status = r.status
@@ -12,7 +23,7 @@ async function get(url, headers = {}, init = {}) {
   }
   return r
 }
-const json = (url, headers, init) => get(url, headers, init).then(r => r.json())
+const json = (url, headers, init = {}) => get(url, headers, { signal: AbortSignal.timeout(60e3), ...init }).then(r => r.json())
 // Downloads over 256 KB report progress to the hook (download queue UI).
 const progress = { hook: null }
 let dlId = 0

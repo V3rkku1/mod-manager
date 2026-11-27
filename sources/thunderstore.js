@@ -64,5 +64,7 @@ module.exports = ({ files }) => ({
     }
   },
 
+  changelog: async (p, id, vid) => (await json(`${pkg(id)}${q(vid)}/changelog/`).catch(() => null))?.markdown || null,
+
   url: (p, id) => { const [ns, name] = split(id); return `${TS}/c/${p.game}/p/${ns}/${name}/` },
 })

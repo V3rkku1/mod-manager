@@ -10,11 +10,13 @@ let profiles = [], cur = null, tab = 'browse', page = 1, timer, updates = {}, pi
 const gameCache = {}
 if (window.platform === 'darwin') document.body.classList.add('mac')
 
-const toast = (msg, err) => {
+// action = { label, fn } adds a button (e.g. Undo) to the toast.
+const toast = (msg, err, action) => {
   const t = document.createElement('div')
   t.className = 'toast' + (err ? ' err' : '')
   t.innerHTML = ic(err ? 'alert' : 'check') + `<span>${esc(msg)}</span>`
-  $('#toasts').append(t); setTimeout(() => t.remove(), err ? 8000 : 3500)
+  if (action) { const b = document.createElement('button'); b.textContent = action.label; b.onclick = () => { t.remove(); action.fn() }; t.append(b) }
+  $('#toasts').append(t); setTimeout(() => t.remove(), err ? 8000 : action ? 7000 : 3500)
 }
 const run = async fn => {
   try { return await fn() } catch (e) { toast(e.message.replace(/^Error invoking remote method '\w+': (Error: )?/, ''), true) }
@@ -40,12 +42,12 @@ const meta = p => (p.type === 'modrinth' ? `Minecraft ${p.mc.version} · ${p.mc.
 const TITLES = { browse: ['Browse', 'compass'], installed: ['Installed', 'package'], worlds: ['Worlds', 'globe'], logs: ['Logs', 'terminal'], server: ['Server', 'server'], options: ['Options', 'sliders'] }
 const LINK = 'https://v3rkku1.github.io/mod-manager/join.html#'
 let selected = new Set()
-let running = new Set(), status = {}, filterCache = {}, chips = new Set(), pages = 1
+let running = new Set(), status = {}, filterCache = {}, chips = new Set(), pages = 1, remembering = true
 
 function render() {
   const groups = [...new Set(profiles.map(p => p.group || ''))].sort()
   $('#rail').innerHTML = groups.map(g => (g ? `<div class="sep"></div><div class="rail-group" title="${esc(g)}">${esc(g)}</div>` : '')
-    + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''}" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}</button>`).join('')).join('')
+    + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''}" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}${Object.keys(updates[p.id] || {}).length ? `<i class="rbadge">${Object.keys(updates[p.id]).length}</i>` : ''}</button>`).join('')).join('')
     + (profiles.length ? '<div class="sep"></div>' : '')
     + `<button class="pfp add" id="add" data-tip="New profile">${ic('plus')}</button>`
     + `<button class="pfp gear" id="settings" data-tip="Settings">${ic('gear')}</button>`
@@ -92,6 +94,7 @@ const card = (m, src, installed) => `<div class="mod" data-id="${esc(m.id)}" dat
   <div class="body"><div class="top"><b>${esc(m.title)}</b>${m.author ? `<small>by ${esc(m.author)}</small>` : ''}
   ${m.downloads != null ? `<small>${ic('download', 'i sm')} ${fmt(m.downloads)}</small>` : ''}${(m.tags || []).slice(0, 3).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div><p>${esc(m.desc)}</p></div>
   <div class="actions">
+    <button class="icon fav ${isFav(src, m.id) ? 'on' : ''}" data-act="fav" title="Favorite">${ic('star')}</button>
     <button class="icon" data-act="link" title="Open mod page">${ic('external')}</button>
     <button class="act ${installed ? 'done' : ''}" data-act="toggle">${installed ? installedBtn : `${ic('download')} Install`}</button>
   </div></div>`
@@ -104,10 +107,10 @@ const row = m => {
   ${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy" decoding="async">` : '<div class="noicon"></div>'}
   <div class="body"><div class="top"><b>${esc(m.name)}</b><span class="tag">${esc(m.version)}</span>
   ${src === 'local' ? '<span class="tag">Local file</span>' : cur.type === 'modrinth' ? `<span class="tag src ${src}">${SRC[src]}</span>` : ''}${m.pack ? '<span class="tag pack">Modpack</span>' : ''}
-  ${up ? `<span class="tag upd">→ ${esc(up)}</span>` : ''}${m.pinned ? `<span class="tag">${ic('key', 'i sm')} Pinned</span>` : ''}</div>
+  ${up ? `<span class="tag upd">→ ${esc(up.version ?? up)}</span>` : ''}${m.pinned ? `<span class="tag">${ic('key', 'i sm')} Pinned</span>` : ''}</div>
   <p>${m.note ? `📝 ${esc(m.note)} · ` : ''}${parents.length ? `Needed by ${esc(parents.join(', '))} · ` : m.deps?.length ? `Uses ${m.deps.length} dependenc${m.deps.length === 1 ? 'y' : 'ies'} · ` : ''}${m.files.length} file${m.files.length === 1 ? '' : 's'}</p></div>
   <div class="actions">
-    ${up ? `<button class="upd" data-act="update">${ic('up')} Update</button>` : ''}
+    ${up ? `<button class="icon" data-act="changes" title="What's new">${ic('file')}</button><button class="upd" data-act="update">${ic('up')} Update</button>` : ''}
     ${m.pack && src !== 'local' ? `<button class="icon" data-act="unlink" title="Unlink from modpack (stop pack updates)">${ic('x')}</button>` : ''}
     ${src === 'local' ? '' : `<button class="icon" data-act="link" title="Open mod page">${ic('external')}</button>`}
     <button class="icon ${m.pinned ? 'on' : ''}" data-act="pin" title="${m.pinned ? 'Unpin (allow updates)' : 'Pin this version (skip updates)'}">${ic('key')}</button>
@@ -134,7 +137,7 @@ async function search(keepPage) {
   const args = searchArgs(), key = JSON.stringify(args)
   if (!searchCache.has(key)) $('#list').innerHTML = '<div class="skel"></div>'.repeat(6)
   loadFilters()
-  const res = await run(() => cachedSearch(args))
+  const res = favMode ? { pages: 1, items: favList() } : await run(() => cachedSearch(args))
   if (cur?.id !== id || tab !== 'browse' || JSON.stringify(searchArgs()) !== key) return
   if (res && page < res.pages) (window.requestIdleCallback || setTimeout)(() => cachedSearch(searchArgs(page + 1)).catch(() => {}))
   if (!res) return $('#list').innerHTML = `<div class="hint">${ic('alert')}Couldn't load mods.</div>`
@@ -232,6 +235,7 @@ $('#checkUpd').onclick = () => checkUpdates()
 $('#updAll').onclick = async () => {
   const id = cur.id, ids = Object.keys(updates[id] || {}), b = $('#updAll')
   b.disabled = true
+  await api.snapshot(id, `Before updating ${ids.length} mod${ids.length === 1 ? "" : "s"}`).catch(() => {})
   for (const [i, mod] of ids.entries()) {
     b.lastChild.textContent = ` Updating ${i + 1}/${ids.length}…`
     const p = await run(() => api.update(id, mod))
@@ -262,14 +266,18 @@ $('#list').onclick = async e => {
   if (act === 'pin') { const m = cur.mods.find(m => m.id === modId); const p = await run(() => api.updateMod(id, modId, { pinned: !m.pinned })); if (p) setProfile(p), showInstalled(); return }
   if (act === 'note') { const m = cur.mods.find(m => m.id === modId), n = await ask('Note for ' + m.name, m.note || ''); if (n !== null) { const p = await run(() => api.updateMod(id, modId, { note: n })); if (p) setProfile(p), showInstalled() } return }
   if (act === 'link') return api.openExternal(await api.pageUrl(id, src, modId))
+  if (act === 'fav') { toggleFav(src, el, modId); b.classList.toggle('on', isFav(src, modId)); if (favMode) search(); return }
+  if (act === 'changes') { const m = cur.mods.find(m => m.id === modId), up = updates[id]?.[modId]; return showChanges(src, modId, m.name, up.vid, up.version) }
   if (act === 'unlink') { const p = await run(() => api.unlinkPack(id, modId)); if (p) setProfile(p), showInstalled(); return }
   const remove = act === 'remove' || (act === 'toggle' && b.classList.contains('done'))
+  const was = remove && cur.mods.find(m => m.id === modId)
   const html = b.innerHTML
   b.disabled = true
   b.innerHTML = `${ic('refresh', 'i spin')} ${act === 'update' ? 'Updating' : remove ? 'Removing' : 'Installing'}…`
   const p = act === 'update' ? await run(() => api.update(id, modId)) : remove ? await run(() => api.uninstall(id, modId)) : await doInstall(src, modId)
   if (!p) return b.disabled = false, b.innerHTML = html
   if (act === 'update') delete updates[id]?.[modId], warn(p)
+  if (was && was.src !== 'local') toast(`Removed ${was.name}`, false, { label: 'Undo', fn: async () => { const q = await doInstall(srcOf(was), was.id, was.vid ?? was.version); if (q && cur?.id === id) render() } })
   setProfile(p)
   if (cur?.id !== id) return
   updateBadges()
@@ -329,9 +337,10 @@ function renderDetails(pane) {
     <div class="dbody">${pane === 'desc'
       ? (d.gallery.length ? `<div class="gallery">${d.gallery.map(g => `<img src="${esc(g)}" alt="" loading="lazy">`).join('')}</div>` : '') + `<div class="desc">${toHtml(d)}</div>`
       : `<div class="vers">${d.versions.map(v => `<div class="ver"><div><b>${esc(v.name)}</b><small>${v.date ? new Date(v.date).toLocaleDateString() : ''}${v.tag ? ' · ' + esc(v.tag) : ''}${v.downloads != null ? ` · ${fmt(v.downloads)} downloads` : ''}</small></div>
-        ${inst && String(inst.vid ?? inst.version) === String(v.vid) ? `<span class="tag">Installed</span>` : `<button data-ver="${esc(v.vid)}">${ic('download')} Install</button>`}</div>`).join('') || '<p class="muted">No versions for this game version / loader.</p>'}</div>`}</div>`
+        ${inst && String(inst.vid ?? inst.version) === String(v.vid) ? `<span class="tag">Installed</span>` : `<button data-ver="${esc(v.vid)}">${ic('download')} Install</button>`}<button class="icon" data-chg="${esc(v.vid)}" data-chgname="${esc(v.name)}" title="What changed">${ic('file')}</button></div>`).join('') || '<p class="muted">No versions for this game version / loader.</p>'}</div>`}</div>`
 }
 $('#detail').onclick = async e => {
+  const chg = e.target.closest('[data-chg]'); if (chg) return showChanges(detail.src, detail.id, detail.title, chg.dataset.chg, chg.dataset.chgname)
   const t = e.target.closest('[data-pane]'); if (t) return renderDetails(t.dataset.pane)
   if (e.target.matches('.gallery img')) {
     const z = document.createElement('div'); z.id = 'zoom'; z.innerHTML = `<img src="${esc(e.target.src)}" alt="">`
@@ -772,6 +781,62 @@ $('#pitBox').addEventListener('click', async e => {
 })
 $('#pitBox').addEventListener('change', e => { if (e.target.id === 'pitUse') run(() => api.saveSettings({ tunnel: e.target.checked ? 'auto' : 'bore' })) })
 
+// ---- Changelogs ----
+async function showChanges(src, id, name, vid, version) {
+  $('#chgTitle').textContent = `${name} ${version || ''}`
+  $('#chgBody').innerHTML = '<div class="skel"></div>'
+  $('#chgDlg').showModal()
+  const c = await api.changelog(cur.id, src, id, vid).catch(() => null)
+  $('#chgBody').innerHTML = !c ? '<p class="muted">No changelog for this version. Open the mod page for details.</p>'
+    : DOMPurify.sanitize(c.html || marked.parse(c), { FORBID_ATTR: ['style'], FORBID_TAGS: ['style', 'form', 'input', 'button'] })
+}
+
+// ---- History (snapshots) ----
+async function showHistory() {
+  const list = await api.snapshots(cur.id)
+  $('#histList').innerHTML = list.map(s => `<div class="acct"><b>${esc(s.reason)}</b><span class="muted small">${s.count} mods · ${new Date(s.time).toLocaleString()}</span>
+    <button data-snap="${s.id}">Restore</button></div>`).join('') || '<p class="muted center">No snapshots yet.</p>'
+}
+$('#history').onclick = () => { showHistory(); $('#histDlg').showModal() }
+$('#snapNow').onclick = async () => { if (await run(() => api.snapshot(cur.id, 'Manual'))) toast('Snapshot saved'); showHistory() }
+$('#histList').onclick = async e => {
+  const id = e.target.closest('[data-snap]')?.dataset.snap
+  if (!id || !confirm('Roll the mod list back to this snapshot? A snapshot of the current list is saved first.')) return
+  e.target.disabled = true; e.target.textContent = 'Restoring…'
+  const r = await run(() => api.restoreSnapshot(cur.id, id))
+  if (r) { setProfile(r.profile); toast(r.failed.length ? `Restored, ${r.failed.length} failed` : 'Mod list restored', !!r.failed.length); render() }
+  showHistory()
+}
+
+// ---- Favorites (per device; stored with the card so the list shows offline) ----
+let favMode = false
+const favKey = src => `${src}:${src === 'modrinth' || src === 'curseforge' && cur.type === 'modrinth' ? 'mc' : cur.game || cur.type}`
+const favs = () => { try { return JSON.parse(localStorage.getItem('mm.favs')) || {} } catch { return {} } }
+const isFav = (src, id) => !!favs()[favKey(src)]?.[id]
+function toggleFav(src, el, id) {
+  const all = favs(), k = favKey(src), bucket = all[k] ||= {}
+  if (bucket[id]) delete bucket[id]
+  else bucket[id] = { id, title: el.querySelector('b').textContent, author: el.querySelector('small')?.textContent.replace(/^by /, ''), desc: el.querySelector('p')?.textContent, icon: el.querySelector('img')?.src }
+  try { localStorage.setItem('mm.favs', JSON.stringify(all)) } catch {}
+}
+const favList = () => Object.values(favs()[favKey(curSrc())] || {}).filter(m => !$('#q').value || m.title.toLowerCase().includes($('#q').value.toLowerCase()))
+$('#favs').onclick = () => { favMode = !favMode; $('#favs').classList.toggle('on', favMode); search() }
+
+// ---- Background update check: badges on the profile rail + one desktop notification ----
+async function backgroundUpdates() {
+  let total = 0
+  for (const p of profiles) {
+    if (!p.mods.some(m => m.src !== 'local')) continue
+    const r = await api.checkUpdates(p.id).catch(() => null)
+    if (!r) continue
+    updates[p.id] = r; total += Object.keys(r).length
+  }
+  render()
+  if (total) try { new Notification('Mod Manager', { body: `${total} mod update${total === 1 ? '' : 's'} available`, silent: true }) } catch {}
+}
+setTimeout(() => backgroundUpdates(), 8000)
+setInterval(() => backgroundUpdates(), 6 * 3600e3)
+
 // ---- Keyboard shortcuts + quick switcher ----
 document.addEventListener('keydown', e => {
   if (!(e.ctrlKey || e.metaKey) || document.querySelector('dialog[open]:not(#quickDlg)')) return
@@ -801,7 +866,6 @@ $('#quickQ').onkeydown = e => {
 $('#quickList').onclick = e => { const b = e.target.closest('[data-qid]'); if (b) quickGo(b.dataset.qid) }
 $('#quickDlg').onclick = e => { if (e.target.id === 'quickDlg') $('#quickDlg').close() }
 
-let remembering = true
 api.getSettings().then(s => {
   look = { ...LOOK, ...Object.fromEntries(Object.keys(LOOK).filter(k => s[k] !== undefined).map(k => [k, s[k]])) }
   if (!('accent' in s) && s.theme === 'dark') look.theme = 'midnight' // old default -> new darker default
@@ -813,6 +877,7 @@ async function bulkAction(kind) {
   const id = cur.id, ids = [...selected]
   if (kind === 'none') return selected.clear(), showInstalled()
   if (kind === 'remove' && !confirm(`Remove ${ids.length} mods?`)) return
+  if (kind === 'remove' || kind === 'update') await api.snapshot(id, `Before ${kind === "remove" ? "removing" : "updating"} ${ids.length} mod${ids.length === 1 ? "" : "s"}`).catch(() => {})
   for (const mid of ids) {
     const p = await run(() => kind === 'update' ? api.update(id, mid) : kind === 'remove' ? api.uninstall(id, mid) : api.setDisabled(id, mid, kind === 'disable'))
     if (p) setProfile(p)

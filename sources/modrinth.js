@@ -95,6 +95,7 @@ module.exports = ({ files, settings }) => {
     },
 
     filters: async (p, kind = 'mod') => ({ categories: (await json(`${MR}/tag/category`)).filter(c => c.project_type === kind && c.header === 'categories').map(c => ({ id: c.name, name: c.name[0].toUpperCase() + c.name.slice(1) })).sort((a, b) => a.name.localeCompare(b.name)) }),
+    changelog: async (p, id, vid) => (await json(`${MR}/version/${q(vid)}`)).changelog || null,
     url: (p, id) => `https://modrinth.com/project/${id}`,
   }
 }

@@ -47,6 +47,21 @@ const count = dir => fs.existsSync(path.join(tmp, dir)) ? fs.readdirSync(path.jo
   await core.deploy(mc.id)
   assert.strictEqual(count('game/mods'), p.mods.length, 'deploy')
   assert.deepStrictEqual(await core.checkUpdates(mc.id), {}, 'fresh install has no updates')
+  // Failed version switch keeps the old mod and its files (regression: update used to delete first)
+  const keep = (await core.listProfiles()).find(x => x.id === mc.id).mods.find(m => m.id === 'mOgUt4GM')
+  await assert.rejects(core.install(mc.id, 'modrinth', 'mOgUt4GM', 'zzzzzzzz'))
+  const after = (await core.listProfiles()).find(x => x.id === mc.id).mods.find(m => m.id === 'mOgUt4GM')
+  assert(after && after.vid === keep.vid && fs.existsSync(path.join(tmp, 'profiles', mc.id, 'files', keep.files[0])), 'old version restored after failed update')
+  // Snapshot + rollback
+  const snap = await core.snapshot(mc.id, 'test')
+  await core.install(mc.id, 'modrinth', 'gvQqBUqZ')
+  const back = await core.restoreSnapshot(mc.id, snap)
+  assert(!back.profile.mods.some(m => m.id === 'gvQqBUqZ') && back.profile.mods.some(m => m.id === 'mOgUt4GM'), 'rollback')
+  assert((await core.snapshots(mc.id)).some(x => x.reason === 'Before rollback'), 'auto snapshot before rollback')
+  // A corrupt profile.json no longer breaks the list
+  fs.mkdirSync(path.join(tmp, 'profiles', 'broken'), { recursive: true }); fs.writeFileSync(path.join(tmp, 'profiles', 'broken', 'profile.json'), '{"id":')
+  assert((await core.listProfiles()).length >= 2, 'list survives a broken profile')
+  fs.rmSync(path.join(tmp, 'profiles', 'broken'), { recursive: true })
   const before = p.mods.length
   p = await core.update(mc.id, 'mOgUt4GM')
   assert.strictEqual(p.mods.length, before, 'update keeps mod')
