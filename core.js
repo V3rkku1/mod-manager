@@ -322,6 +322,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     const status = () => emit('sstatus', { pid })
     delete lastIssues[pid]
     try {
+      await syncPull(pid, log)
       log('Preparing server files…')
       let plan
       if (kind === 'bedrock') plan = await prepareBedrock(sdir, log)
@@ -391,6 +392,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         lastLogs[pid] = s.log; delete servers[pid]
         if (!s.stopping) lastIssues[pid] = analyzeServer(s.log)
         const o = load(pid).server || {}
+        if (syncDirOf(load(pid))) { await syncPush(pid, log).catch(e => log(`World sync failed: ${e.message}`)); if (!s.restart) releaseLock(pid) }
         if (o.backupOnStop) await backupWorld(pid).then(n => log(`Backup saved: ${n}`)).catch(e => log(`Backup failed: ${e.message}`))
         status()
         // Auto-restart after a crash, or after Restart. At most 3 crash restarts within 10 minutes, so a broken mod doesn't loop forever.
@@ -402,11 +404,74 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         }
       })
       s.stopCmds = onStop
+      // Heartbeat keeps the host lock fresh; periodic upload protects against a crash losing the shared world.
+      if (syncDirOf(p)) {
+        s.timers.push(setInterval(() => { try { writeLock(syncDirOf(load(pid)), { heartbeat: Date.now(), address: s.address || null }) } catch {} }, 30e3))
+        s.timers.push(setInterval(() => syncPush(pid, log).catch(e => log(`World sync failed: ${e.message}`)), 30 * 60e3))
+      }
       s.lan = `${lanIp()}:${sport}`
       status()
       return true
-    } catch (e) { lastLogs[pid] = s.log; lastIssues[pid] = analyzeServer(s.log); delete servers[pid]; status(); throw e }
+    } catch (e) { lastLogs[pid] = s.log; lastIssues[pid] = analyzeServer(s.log); delete servers[pid]; if (!/hosting this world/.test(e.message)) releaseLock(pid); status(); throw e }
   }
+  // ---- World sync: a shared cloud folder (Google Drive / OneDrive / Dropbox) holds world.zip + meta.json + lock.json ----
+  // shortcut: relies on the cloud app to sync files; a lock older than 3 minutes counts as abandoned (host crashed or went offline).
+  const SYNC_FILES = ['server.properties', 'ops.json', 'whitelist.json', 'banned-players.json', 'banned-ips.json', 'allowlist.json', 'permissions.json', 'server-icon.png']
+  const LOCK_STALE = 180e3
+  const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')) } catch { return null } }
+  const syncDirOf = p => p.server?.syncDir && fs.existsSync(p.server.syncDir) ? p.server.syncDir : null
+  // MM_SYNC_NAME lets tests run two "friends" on one machine.
+  const me = () => { if (process.env.MM_SYNC_NAME) return process.env.MM_SYNC_NAME; const a = readAccounts().find(a => a.uuid === settings().activeAccount); return (a?.name || os.userInfo().username || 'host') + '@' + os.hostname() }
+  const lockInfo = dir => {
+    const l = readJson(path.join(dir, 'lock.json'))
+    return l && Date.now() - l.heartbeat < LOCK_STALE ? { ...l, mine: l.host === me() } : null
+  }
+  const writeLock = (dir, extra = {}) => fs.writeFileSync(path.join(dir, 'lock.json'), JSON.stringify({ host: me(), since: Date.now(), heartbeat: Date.now(), ...readJson(path.join(dir, 'lock.json')), ...extra, ...(extra.host ? {} : { host: me() }) }))
+
+  // Download the newest shared world if it is newer than ours (keeping a backup of ours first), then take the host lock.
+  async function syncPull(pid, log) {
+    const p = load(pid), dir = syncDirOf(p)
+    if (!dir) return
+    const lock = lockInfo(dir)
+    if (lock && !lock.mine) throw new Error(`${lock.host.split('@')[0]} is hosting this world right now${lock.address ? ` at ${lock.address}` : ''}. Join them instead.`)
+    const meta = readJson(path.join(dir, 'meta.json')), mine = p.server?.syncVersion || 0
+    if (meta && meta.version > mine) {
+      const kind = kindOf(p), sdir = sdirOf(pid, kind), zipFile = path.join(dir, 'world.zip')
+      if (!fs.existsSync(zipFile)) throw new Error('The shared folder has meta.json but no world.zip yet — wait for your cloud app to finish syncing')
+      if (fs.existsSync(path.join(sdir, worldDirs(pid, kind)[0]))) await backupWorld(pid).then(n => log(`Backed up your old copy: ${n}`))
+      log(`Downloading shared world v${meta.version} (saved by ${String(meta.by).split('@')[0]} ${new Date(meta.savedAt).toLocaleString()})…`)
+      const zip = unzipSync(fs.readFileSync(zipFile))
+      for (const d of worldDirs(pid, kind)) fs.rmSync(inside(sdir, d), { recursive: true, force: true })
+      for (const [f, data] of Object.entries(zip)) if (!f.endsWith('/')) write(sdir, f, data)
+      save({ ...load(pid), server: { ...load(pid).server, syncVersion: meta.version } })
+    } else log(meta ? `Shared world is up to date (v${meta.version})` : 'Shared folder is empty — your world will be uploaded when the server stops')
+    writeLock(dir, { host: me(), since: Date.now(), heartbeat: Date.now(), address: null })
+  }
+
+  // Upload the world (atomic: temp file + rename) and bump the version.
+  async function syncPush(pid, log) {
+    const p = load(pid), dir = syncDirOf(p)
+    if (!dir) return
+    const kind = kindOf(p), sdir = sdirOf(pid, kind), s = servers[pid]
+    if (!fs.existsSync(path.join(sdir, worldDirs(pid, kind)[0]))) return
+    const lock = lockInfo(dir)
+    if (lock && !lock.mine) throw new Error(`Not uploading: ${lock.host.split('@')[0]} is hosting now`)
+    if (s?.online) { s.child.stdin.write(kind === 'bedrock' ? 'save hold\n' : 'save-off\nsave-all flush\n'); await new Promise(r => setTimeout(r, 3000)) }
+    try {
+      const zip = {}
+      for (const d of worldDirs(pid, kind)) for (const f of walk(path.join(sdir, d))) if (!f.endsWith('session.lock')) zip[`${d}/${f}`] = fs.readFileSync(path.join(sdir, d, f))
+      for (const f of SYNC_FILES) if (fs.existsSync(path.join(sdir, f))) zip[f] = fs.readFileSync(path.join(sdir, f))
+      const version = Math.max(p.server?.syncVersion || 0, readJson(path.join(dir, 'meta.json'))?.version || 0) + 1
+      fs.writeFileSync(path.join(dir, 'world.zip.tmp'), zipSync(zip, { level: 1 }))
+      fs.renameSync(path.join(dir, 'world.zip.tmp'), path.join(dir, 'world.zip'))
+      fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ version, savedAt: Date.now(), by: me(), mc: p.mc.version, kind }))
+      save({ ...load(pid), server: { ...load(pid).server, syncVersion: version } })
+      log?.(`World uploaded to the shared folder (v${version})`)
+      return version
+    } finally { if (s?.online) s.child.stdin.write(kind === 'bedrock' ? 'save resume\n' : 'save-on\n') }
+  }
+  const releaseLock = pid => { const dir = syncDirOf(load(pid)); if (dir && lockInfo(dir)?.mine) fs.rmSync(path.join(dir, 'lock.json'), { force: true }) }
+
   const lanIp = () => Object.values(os.networkInterfaces()).flat().find(i => i.family === 'IPv4' && !i.internal)?.address || 'localhost'
 
   // One write at a time: profile.json is read-modify-written.
@@ -415,7 +480,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
     'preview', 'checkFollow', 'publish', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
-    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -774,9 +839,24 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         s.tunnel = await tunnel.open(port, { onError: () => { s.address = null; emit('sstatus', { pid }) } })
         s.address = `${s.tunnel.host}:${s.tunnel.port}`
       }
+      const sd = syncDirOf(load(pid)); if (sd) try { writeLock(sd, { heartbeat: Date.now(), address: s.address }) } catch {}
       emit('sstatus', { pid })
       return s.address
     },
+    // World sync API
+    syncStatus: pid => {
+      const p = load(pid), dir = syncDirOf(p)
+      return { dir: p.server?.syncDir || null, missing: !!p.server?.syncDir && !dir, meta: dir && readJson(path.join(dir, 'meta.json')), lock: dir && lockInfo(dir), local: p.server?.syncVersion || 0, me: me() }
+    },
+    setSyncDir: (pid, d) => {
+      if (servers[pid]) throw new Error('Stop the server first')
+      if (d && !(path.isAbsolute(d) && fs.statSync(d).isDirectory())) throw new Error('Pick a folder')
+      const p = load(pid)
+      // Joining an existing shared world: pull on next start (version 0 locally).
+      return save({ ...p, server: { ...p.server, syncDir: d || undefined, syncVersion: d && readJson(path.join(d, 'meta.json')) ? 0 : p.server?.syncVersion } }).server
+    },
+    syncNow: pid => syncPush(pid, line => emit('slog', { pid, line })),
+    syncPull: pid => { if (servers[pid]) throw new Error('Stop the server first'); return syncPull(pid, line => emit('slog', { pid, line })).then(() => (releaseLock(pid), true)) },
     playitStatus: () => ({ linked: !!playitSecret(), tunnel: settings().tunnel || 'auto' }),
     playitLinkStart: () => pit.claimStart(),
     playitLinkFinish: async code => { setSettingsRaw({ playitSecret: encrypt(await pit.claimFinish(code)) }); return true },

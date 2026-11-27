@@ -444,3 +444,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .mod:hover { transform: translateY(-1px); }
 .toast { backdrop-filter: blur(8px); }
 ::selection { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+
+.steps { padding-left: 20px; display: grid; gap: 6px; color: var(--text); font-size: 14px; }
+.addr b { color: var(--head); font-weight: 600; }
+.addr .row { gap: 8px; }
+.acct .path { flex: 1; font-size: 13px; }

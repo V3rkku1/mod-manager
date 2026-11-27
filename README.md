@@ -74,6 +74,15 @@ Server tab (Minecraft profiles), a self-hosting panel similar to SquidServers:
 - App settings: start with Windows, turn automatic updates off.
 - Closing the window while a server runs keeps it running in the tray.
 
+## World sync (host when you're not around)
+
+Server > World sync: pick a folder inside Google Drive, OneDrive or Dropbox that you share with your friends. Everyone picks that folder in a profile with the same mods.
+
+- Start: downloads the newest shared world (your old copy goes to Backups) and takes the host lock.
+- While hosting: friends see "X is hosting this world now" with the address and a Join button. The world is uploaded every 30 minutes.
+- Stop: the world (plus server.properties, ops, whitelist, bans, icon) is uploaded as a new version and the lock is released, so the next friend can host.
+- Only one host at a time; a lock older than 3 minutes counts as abandoned.
+
 ## Minecraft launcher
 
 Minecraft profiles launch the game themselves: Vanilla, Fabric, Quilt, Forge, NeoForge, any version incl. snapshots. Java is downloaded automatically (Mojang runtimes).

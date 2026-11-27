@@ -871,13 +871,16 @@ async function showServer() {
   const o = { maxMem: 2048, port: s.kind === 'bedrock' ? 19132 : 25565, online: true, ...s.opts }, kind = s.kind
   const state = !s.running ? 'Stopped' : s.online ? 'Online' : 'Starting…'
   const plugins = kind === 'paper' || kind === 'purpur'
-  const tabs = ['console', 'players', ...(plugins ? ['plugins'] : []), 'settings', 'backups', 'help'].map(t => `<button data-stab="${t}" class="${srvTab === t ? 'on' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')
+  const tabs = ['console', 'players', ...(plugins ? ['plugins'] : []), 'settings', 'sync', 'backups', 'help'].map(t => `<button data-stab="${t}" class="${srvTab === t ? 'on' : ''}">${t === 'sync' ? 'World sync' : t[0].toUpperCase() + t.slice(1)}</button>`).join('')
   if (srvTab === 'plugins' && !plugins) srvTab = 'console'
+  const sy = await api.syncStatus(id)
   $('#list').innerHTML = `<div class="srv">
     <div class="srvhead">${s.icon ? `<img class="sicon" src="${s.icon}" alt="">` : ''}<span class="dot ${s.online ? 'on' : s.running ? 'mid' : ''}"></span><b>${state}</b>
       <span class="tag">${esc(KINDS[kind])}</span>
       ${s.online ? `<span class="muted small">${s.players.length} player${s.players.length === 1 ? '' : 's'} online · since ${new Date(s.since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>` : '<span class="small"></span>'}
       ${s.running ? `<button id="srvRestart">${ic('refresh')} Restart</button><button id="srvStop" class="danger">${ic('stop')} Stop</button>` : `<button id="srvStart" class="primary">${ic('play')} Start server</button>`}</div>
+    ${!s.running && sy.lock && !sy.lock.mine ? `<div class="banner">${ic('globe')}<div><b>${esc(sy.lock.host.split('@')[0])} is hosting this world now</b><p>${sy.lock.address ? `Address: <code>${esc(sy.lock.address)}</code>` : 'Waiting for their public address…'}</p></div>${sy.lock.address ? `<button class="primary" data-joinhost="${esc(sy.lock.address)}">${ic('play')} Join</button>` : ''}</div>` : ''}
+    ${!s.running && sy.dir && sy.meta && !sy.lock ? `<div class="banner">${ic('refresh')}<div><b>Shared world v${sy.meta.version}</b><p>Last saved by ${esc(String(sy.meta.by).split('@')[0])} · ${new Date(sy.meta.savedAt).toLocaleString()}${sy.meta.version > sy.local ? ' · newer than yours, downloads when you start' : ''}</p></div></div>` : ''}
     ${!s.running && s.issues.length ? `<div class="banner warn">${ic('alert')}<div><b>The server stopped with problems</b>${s.issues.map(i => `<p>${esc(i)}</p>`).join('')}</div><button id="srvShareLog">${ic('share')} Share log</button></div>` : ''}
     ${s.running ? `<div class="addr">
         <div><small>SAME WI-FI / LAN</small><code>${esc(s.lan || '')}</code><button class="icon" data-copy-text="${esc(s.lan || '')}">${ic('copy')}</button></div>
@@ -958,6 +961,22 @@ async function showServer() {
         <button class="primary">${ic('check')} Save world settings</button></form>
       <input type="file" id="srvIconFile" accept="image/*" hidden>`
   }
+  if (srvTab === 'sync') {
+    pane.innerHTML = `<div class="section"><h4>SHARED WORLD FOLDER</h4>
+      ${sy.dir ? `<div class="acct">${ic('folder')}<b class="path">${esc(sy.dir)}</b>${sy.missing ? '<span class="tag upd">Not found</span>' : ''}<button id="syncPick" ${s.running ? 'disabled' : ''}>Change</button><button class="icon" id="syncOff" ${s.running ? 'disabled' : ''} title="Stop syncing">${ic('x')}</button></div>`
+        : `<button id="syncPick" class="primary" ${s.running ? 'disabled' : ''}>${ic('folder')} Choose shared folder</button>`}
+      ${sy.dir && !sy.missing ? `<div class="addr">
+        <div><small>SHARED VERSION</small><b>${sy.meta ? `v${sy.meta.version} · ${esc(String(sy.meta.by).split('@')[0])} · ${new Date(sy.meta.savedAt).toLocaleString()}` : 'Empty — your world uploads when the server stops'}</b></div>
+        <div><small>YOUR COPY</small><b>v${sy.local}</b></div>
+        <div><small>HOST</small><b>${sy.lock ? `${esc(sy.lock.host.split('@')[0])}${sy.lock.mine ? ' (you)' : ''}${sy.lock.address ? ` · ${esc(sy.lock.address)}` : ''}` : 'Nobody is hosting'}</b></div>
+        <div class="row"><button id="syncUp" ${sy.lock && !sy.lock.mine ? 'disabled' : ''}>${ic('up')} Upload now</button><button id="syncDown" ${s.running || (sy.lock && !sy.lock.mine) ? 'disabled' : ''}>${ic('download')} Download latest</button></div></div>` : ''}</div>
+      <div class="section"><h4>HOW IT WORKS</h4><ol class="steps">
+        <li>Make a folder inside Google Drive, OneDrive or Dropbox (their desktop app must be installed) and share it with your friends.</li>
+        <li>Everyone picks that folder here, in a profile with the same mods (send them your invite link).</li>
+        <li>Whoever presses Start downloads the newest world, becomes the host, and the others see "is hosting now" with a Join button.</li>
+        <li>When the host stops, the world is uploaded again (also every 30 minutes while running), so the next friend can host.</li></ol>
+      <p class="muted small">Only one person can host at a time. Wait until the cloud app shows the folder as synced before starting. Your previous copy is kept in Backups whenever a newer world is downloaded.</p></div>`
+  }
   if (srvTab === 'backups') {
     const list = await api.backups(id)
     pane.innerHTML = `<div class="row"><button id="bkNow" class="primary">${ic('download')} Back up now</button></div>
@@ -1012,6 +1031,11 @@ $('#list').addEventListener('click', async e => {
     if (!confirm('Upload the server log to mclo.gs (public link)? Logs can contain player names and IP addresses.')) return
     const url = await run(() => api.shareLog(id, 'server')); if (url) navigator.clipboard.writeText(url), toast(`Log link copied: ${url}`), api.openExternal(url); return
   }
+  if (t.dataset.joinhost) return run(async () => { status[id] = 'Preparing…'; playButton(); try { await api.play(id, { server: t.dataset.joinhost }); running.add(id) } finally { if (!running.has(id)) delete status[id]; playButton() } })
+  if (t.id === 'syncPick') { const d = await api.pickFolder(); if (d && await run(() => api.setSyncDir(id, d))) toast('World sync folder set'); return showServer() }
+  if (t.id === 'syncOff' && confirm('Stop syncing this server\'s world? Files in the shared folder stay.')) { await run(() => api.setSyncDir(id, null)); return showServer() }
+  if (t.id === 'syncUp') { t.disabled = true; const v = await run(() => api.syncNow(id)); if (v) toast(`Uploaded world v${v}`); return showServer() }
+  if (t.id === 'syncDown') { t.disabled = true; if (await run(() => api.syncPull(id))) toast('Downloaded the latest shared world'); return showServer() }
   if (t.id === 'srvLoader') {
     if (!confirm('Update the mod loader to the newest version? Make a backup first if this world matters.')) return
     const r = await run(() => api.updateLoader(id)); if (r) toast(`Loader ${r.from || 'auto'} → ${r.to}`), refresh(); return
