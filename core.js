@@ -3,7 +3,8 @@ const fs = require('fs'), path = require('path'), os = require('os'), zlib = req
 const { spawn, execFileSync } = require('child_process')
 const { zipSync, unzipSync, strToU8, strFromU8 } = require('fflate')
 const { json, get, q, inside, write, remove, walk } = require('./lib')
-const MC = require('./mc'), auth = require('./auth')
+const MC = require('./mc'), auth = require('./auth'), tunnel = require('./tunnel'), lib = require('./lib')
+const crypto = require('crypto')
 
 const TS = 'https://thunderstore.io', MR = 'https://api.modrinth.com/v2'
 // Which sites each profile type can install from; first is the default.
@@ -69,13 +70,13 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   }
 
   // Installs a mod (+ required deps) into profile p in place. Returns warnings.
-  async function installMod(p, src, id, vid, deps = true, nxm) {
+  async function installMod(p, src, id, vid, deps = true, nxm, auto) {
     if (!SOURCES[p.type].includes(src)) throw new Error(`${src} mods can't go in this profile`)
     if (p.mods.some(m => m.id === id)) return []
     const r = await S[src].install(p, id, vid, nxm)
-    p.mods.push({ ...r.mod, src }); save(p)
+    p.mods.push({ ...r.mod, src, ...(r.deps.length ? { deps: r.deps.map(d => d.id) } : {}), ...(r.incompat?.length ? { incompat: r.incompat } : {}), ...(auto ? { auto: true } : {}) }); save(p)
     const warns = r.warn ? [r.warn] : []
-    if (deps) for (const d of r.deps) warns.push(...await installMod(p, src, d.id, d.vid, true).catch(e => [`Dependency ${d.id}: ${e.message}`]))
+    if (deps) for (const d of r.deps) warns.push(...await installMod(p, src, d.id, d.vid, true, undefined, true).catch(e => [`Dependency ${d.id}: ${e.message}`]))
     return warns
   }
   const uninstall = (pid, id) => {
@@ -100,13 +101,12 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
 
   // Validates untrusted share data, creates the profile, installs pinned versions and writes shared configs.
   async function importData(d, name, cfg = {}) {
-    const ok = SOURCES[d?.t] && Array.isArray(d.m) && d.m.every(([id, v, src = SOURCES[d.t][0]] = []) =>
-      SOURCES[d.t].includes(src) && ID[src].test(id) && VER.test(v))
-    if (!ok) throw new Error('Invalid share code')
+    if (!validData(d)) throw new Error('Invalid share code')
     const p = create({ name: name || d.n, type: d.t, game: d.g, gameId: d.gi, gameName: d.gn, mc: d.mc && { version: d.mc.version, loader: d.mc.loader }, icon: d.i, banner: d.b })
     const failed = []
     for (const [id, v, src = SOURCES[d.t][0]] of d.m) await installMod(p, src, id, v, false).catch(e => failed.push(`${id}: ${e.message}`))
     for (const [rel, data] of Object.entries(cfg)) write(files(p), rel, data), p.extra.push(rel)
+    if (d.s && p.type === 'modrinth' && /^[\w.-]+:\d+$/.test(d.s)) addServer(p, d.s)
     save(p)
     return { profile: p, failed }
   }
@@ -117,6 +117,10 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     return `  - name: ${m.id}\n    version:\n      major: ${major}\n      minor: ${minor}\n      patch: ${patch}\n    enabled: ${!m.disabled}\n`
   }).join('')
   async function importR2(key, name, game) {
+    const { d, cfg } = await fetchR2(key, game)
+    return importData(d, name, cfg)
+  }
+  async function fetchR2(key, game) {
     const text = await (await get(`${TS}/api/experimental/legacyprofile/get/${q(key)}/`)).text()
     const zip = unzipSync(Buffer.from(text.replace(/^#r2modman\s*/, ''), 'base64'))
     const yaml = strFromU8(zip['export.r2x'] || new Uint8Array())
@@ -125,13 +129,13 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     const mods = [...yaml.matchAll(/- name: (\S+)\s+version:\s+major: (\d+)\s+minor: (\d+)\s+patch: (\d+)/g)].map(m => [m[1], `${m[2]}.${m[3]}.${m[4]}`])
     const cfg = Object.fromEntries(Object.entries(zip).filter(([f]) => f !== 'export.r2x' && !f.endsWith('/')))
     const n = yaml.match(/^profileName:\s*(.+)$/m)?.[1]?.replace(/^"|"$/g, '')
-    return importData({ n, t: 'thunderstore', g, m: mods }, name, cfg)
+    return { d: { n, t: 'thunderstore', g, m: mods }, cfg }
   }
 
   const setSettingsRaw = patch => { const s = { ...settings(), ...patch }; fs.writeFileSync(settingsFile, JSON.stringify(s, null, 1)); return s }
   const cleanLaunch = o => Object.fromEntries(Object.entries({
     maxMem: +o.maxMem || undefined, minMem: +o.minMem || undefined, width: +o.width || undefined, height: +o.height || undefined, fullscreen: !!o.fullscreen || undefined,
-    java: o.java, jvmArgs: o.jvmArgs, env: o.env, preLaunch: o.preLaunch, wrapper: o.wrapper, postExit: o.postExit,
+    java: o.java, args: o.args, jvmArgs: o.jvmArgs, env: o.env, preLaunch: o.preLaunch, wrapper: o.wrapper, postExit: o.postExit,
   }).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 2000) : v]))
 
   // Accounts: refresh tokens are encrypted with the OS keychain (Electron safeStorage) via encrypt/decrypt.
@@ -150,19 +154,70 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     writeAccounts(list.map(x => x.uuid === a.uuid ? fresh : x))
     return fresh
   }
+  const servers = {}
+  lib.progress.hook = d => emit('dl', d)
+  const diff = (p, d) => {
+    const have = Object.fromEntries(p.mods.filter(m => m.src !== 'local').map(m => [m.id, vidOf(m)])), want = Object.fromEntries(d.m.map(([id, v]) => [id, v]))
+    return {
+      add: d.m.filter(([id]) => !(id in have)).map(([id]) => id),
+      change: d.m.filter(([id, v]) => id in have && have[id] !== v).map(([id]) => p.mods.find(m => m.id === id).name),
+      remove: p.mods.filter(m => m.src !== 'local' && !(m.id in want)).map(m => m.name),
+    }
+  }
+  const validData = d => SOURCES[d?.t] && Array.isArray(d.m) && d.m.every(([id, v, src = SOURCES[d.t][0]] = []) => SOURCES[d.t].includes(src) && ID[src].test(id) && VER.test(v))
+  // Share code (MM1…), r2modman key, or gist:<id> -> validated share data.
+  async function parseShare(input) {
+    input = String(input).trim()
+    let d, cfg = {}, rev
+    if (input.startsWith('gist:')) {
+      const g = await json(`https://api.github.com/gists/${q(input.slice(5))}`, { accept: 'application/vnd.github+json' })
+      const f = g.files?.['modmanager.json']
+      if (!f) throw new Error('Not a Mod Manager live share')
+      const text = f.truncated ? await (await get(f.raw_url)).text() : f.content
+      d = JSON.parse(text); rev = crypto.createHash('sha1').update(text).digest('hex')
+    } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input)) {
+      const r = await fetchR2(input); d = r.d; cfg = r.cfg
+    } else {
+      try { d = JSON.parse(zlib.inflateRawSync(Buffer.from(input.replace(/^MM1/, ''), 'base64url'))) } catch { throw new Error('Invalid share code') }
+    }
+    if (!validData(d)) throw new Error('Invalid share code')
+    return { d, cfg, rev }
+  }
+  async function syncData(pid, d, drop, cfg = {}) {
+    let p = load(pid)
+    if (p.type !== d.t || (d.g && p.game !== d.g)) throw new Error('That code is for a different game')
+    const failed = [], want = new Set(d.m.map(([id]) => id))
+    if (drop) for (const m of p.mods.filter(m => m.src !== 'local' && !want.has(m.id))) uninstall(pid, m.id)
+    for (const [id, v, src = SOURCES[d.t][0]] of d.m) {
+      const m = load(pid).mods.find(m => m.id === id)
+      if (m && vidOf(m) === v) continue
+      if (m) uninstall(pid, id)
+      p = load(pid)
+      await installMod(p, src, id, v, false).catch(e => failed.push(`${id}: ${e.message}`))
+    }
+    p = load(pid)
+    for (const [rel, data] of Object.entries(cfg)) write(files(p), rel, data), p.extra.push(rel)
+    return { profile: save(p), failed }
+  }
+  // servers.dat entry so friends see the invited server in Worlds / the game list.
+  const addServer = (p, address) => {
+    const f = path.join(p.target, 'servers.dat'), list = MC.readServers(f).filter(s => s.ip !== address)
+    fs.mkdirSync(p.target, { recursive: true }); MC.writeServers(f, [{ name: `${p.name} (friend)`, ip: address }, ...list])
+  }
   const isShaderPack = async data => { try { return Object.keys(unzipSync(data)).some(f => f.startsWith('shaders/')) } catch { return false } }
 
-  const deployRaw = id => {
+  const deployRaw = (id, { vanilla } = {}) => {
     const p = load(id)
     if (!p.target) throw new Error('Set the target folder first')
     for (const f of p.deployed || []) remove(p.target, f)
-    p.deployed = [...new Set([...p.mods.filter(m => !m.disabled).flatMap(m => m.files), ...(p.extra || [])])]
+    const on = vanilla ? [] : p.mods.filter(m => !m.disabled)
+    p.deployed = [...new Set([...on.flatMap(m => m.files), ...(vanilla ? [] : p.extra || [])])]
     for (const f of p.deployed) {
       fs.mkdirSync(path.dirname(inside(p.target, f)), { recursive: true })
       fs.copyFileSync(inside(files(p), f), inside(p.target, f))
     }
     // tModLoader loads only mods listed in Mods/enabled.json.
-    if (p.type === 'terraria') write(p.target, 'Mods/enabled.json', JSON.stringify(p.mods.filter(m => !m.disabled).flatMap(m => m.files).filter(f => f.endsWith('.tmod')).map(f => path.basename(f, '.tmod'))))
+    if (p.type === 'terraria') write(p.target, 'Mods/enabled.json', JSON.stringify(on.flatMap(m => m.files).filter(f => f.endsWith('.tmod')).map(f => path.basename(f, '.tmod'))))
     p.extra = [] // shared configs apply once; afterwards the game's own files win
     return save(p)
   }
@@ -170,8 +225,9 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   // One write at a time: profile.json is read-modify-written.
   let chain = Promise.resolve()
   const serial = fn => (...a) => { const r = chain.then(() => fn(...a)); chain = r.catch(() => {}); return r }
-  const serialDeploy = id => serial(deployRaw)(id)
+  const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
+    'preview', 'checkFollow', 'publish', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -189,7 +245,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     deleteProfile: id => fs.rmSync(dir(id), { recursive: true, force: true }),
     getSettings: settings,
     setSettings: patch => {
-      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'theme'].filter(k => k in patch)
+      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'theme', 'githubToken'].filter(k => k in patch)
       return setSettingsRaw({ ...Object.fromEntries(pick.map(k => [k, patch[k]])), ...(patch.launch ? { launch: cleanLaunch(patch.launch) } : {}) })
     },
 
@@ -213,7 +269,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     // Returns { [modId]: newVersion } for mods with a newer compatible release.
     checkUpdates: async pid => {
       const p = load(pid)
-      const latest = await Promise.all(p.mods.map(m => m.src === 'local' ? null : S[srcOf(p, m)].latest(p, m).catch(() => null)))
+      const latest = await Promise.all(p.mods.map(m => m.src === 'local' || m.pinned ? null : S[srcOf(p, m)].latest(p, m).catch(() => null)))
       return Object.fromEntries(p.mods.map((m, i) => [m.id, latest[i]]).filter(([m, v], i) => v && v.vid !== vidOf(p.mods[i])).map(([id, v]) => [id, v.version]))
     },
     update: async (pid, id) => {
@@ -226,7 +282,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     },
 
     // Copy enabled mods + shared configs into the target folder; removes what the previous deploy put there first.
-    deploy: deployRaw,
+    deploy: (id, o) => deployRaw(id, o),
 
     findGame: id => {
       const p = load(id)
@@ -239,19 +295,161 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       if (!found) throw new Error(process.platform === 'win32' ? 'Game not found in your Steam libraries — pick the folder manually' : 'Auto-find works on Windows only')
       return save({ ...p, target: found })
     },
-    launch: id => {
-      const p = load(id)
+    launch: (id, { vanilla } = {}) => {
+      if (vanilla) deployRaw(id, { vanilla: true })
+      const p = load(id), args = (p.launch?.args || '').trim()
       if (process.platform !== 'win32') throw new Error('Launch works on Windows only')
       const run = (cmd, args) => spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref()
       if (p.type === 'modrinth') {
         const exe = ['ProgramFiles(x86)', 'ProgramFiles'].map(k => process.env[k] && path.join(process.env[k], 'Minecraft Launcher', 'MinecraftLauncher.exe')).find(f => f && fs.existsSync(f))
         return exe ? run(exe, []) : run('explorer.exe', ['shell:AppsFolder\\Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft'])
       }
-      if (p.type === 'terraria') return run('explorer.exe', ['steam://rungameid/1281930'])
+      const steamRun = appid => run('explorer.exe', [args ? `steam://run/${appid}//${args}/` : `steam://rungameid/${appid}`])
+      if (p.type === 'terraria') return steamRun(1281930)
       const t = path.normalize(p.target || '').toLowerCase()
       const g = t && steamGames().find(g => (t + path.sep).startsWith(g.dir.toLowerCase() + path.sep))
       if (!g) throw new Error('Not a Steam game folder — start the game yourself')
-      run('explorer.exe', [`steam://rungameid/${g.appid}`])
+      steamRun(g.appid)
+    },
+
+    // ---- Mod management extras ----
+    updateMod: (pid, id, patch) => {
+      const p = load(pid), m = p.mods.find(m => m.id === id)
+      if (m && 'pinned' in patch) m.pinned = !!patch.pinned || undefined
+      if (m && 'note' in patch) m.note = String(patch.note || '').slice(0, 300) || undefined
+      return save(p)
+    },
+    // Dependencies installed automatically that nothing needs any more.
+    orphans: pid => {
+      const p = load(pid), needed = new Set(p.mods.flatMap(m => m.deps || []))
+      return p.mods.filter(m => m.auto && !needed.has(m.id)).map(m => ({ id: m.id, name: m.name }))
+    },
+    // Same file written by two enabled mods, or Modrinth "incompatible" pairs.
+    conflicts: pid => {
+      const p = load(pid), on = p.mods.filter(m => !m.disabled), owner = {}, out = []
+      for (const m of on) for (const f of m.files) (owner[f] ||= []).push(m.name)
+      for (const [file, names] of Object.entries(owner)) if (names.length > 1 && !/\/config\//i.test(`/${file}`)) out.push({ type: 'file', file, mods: names })
+      for (const m of on) for (const bad of m.incompat || []) { const o = on.find(x => x.id === bad); if (o) out.push({ type: 'incompatible', mods: [m.name, o.name] }) }
+      return out
+    },
+
+    // Preview what a share code / followed profile would change. With pid: diff against that profile.
+    preview: async (input, pid) => {
+      const { d } = await parseShare(input), p = pid && load(pid)
+      return { name: d.n, type: d.t, game: d.g, gameName: d.gn, mc: d.mc, count: d.m.length, diff: p ? diff(p, d) : null }
+    },
+    sync: async (pid, input, { remove: drop } = {}) => {
+      const { d, cfg, rev } = await parseShare(input)
+      const r = await syncData(pid, d, drop, cfg)
+      if (rev && r.profile.follow && `gist:${r.profile.follow.gist}` === String(input).trim()) r.profile = save({ ...r.profile, follow: { ...r.profile.follow, rev } })
+      return r
+    },
+
+    // Live share via a secret GitHub Gist: the publisher needs a token with "gist" scope; friends only read.
+    publish: async pid => {
+      const p = load(pid), token = settings().githubToken
+      if (!token) throw new Error('Add a GitHub token (gist scope) in Settings to live-share')
+      const body = JSON.stringify({ description: `Mod Manager: ${p.name}`, public: false, files: { 'modmanager.json': { content: JSON.stringify(shareData(p)) } } })
+      const headers = { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' }
+      const r = p.publish
+        ? await json(`https://api.github.com/gists/${q(p.publish)}`, headers, { method: 'PATCH', body }).catch(e => e.status === 404 ? null : Promise.reject(e))
+        : null
+      const g = r || await json('https://api.github.com/gists', headers, { method: 'POST', body })
+      return save({ ...p, publish: g.id }).publish
+    },
+    follow: async (gist, name) => {
+      const { d, rev } = await parseShare(`gist:${gist}`)
+      const res = await importData(d, name)
+      res.profile = save({ ...load(res.profile.id), follow: { gist, rev } })
+      return res
+    },
+    checkFollow: async pid => {
+      const p = load(pid)
+      if (!p.follow) return null
+      const { d, rev } = await parseShare(`gist:${p.follow.gist}`)
+      return { changed: rev !== p.follow.rev, diff: diff(p, d) }
+    },
+
+    // Reads the newest crash report / log and points at installed mods it mentions.
+    analyzeCrash: pid => {
+      const p = load(pid), dirs = ['crash-reports', 'logs'].map(d => path.join(p.target || '', d))
+      const file = dirs.flatMap(d => fs.existsSync(d) ? fs.readdirSync(d).filter(f => /\.(txt|log)$/.test(f)).map(f => path.join(d, f)) : [])
+        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0]
+      if (!file) return { suspects: [] }
+      const text = fs.readFileSync(file, 'utf8')
+      const words = new Set([
+        ...[...text.matchAll(/Suspected Mods?:([^\n]+)/gi)].flatMap(m => [...m[1].matchAll(/\(([\w-]+)\)/g)].map(x => x[1])),
+        ...[...text.matchAll(/(?:Mod ID|modid|from mod)[: ']+([\w-]+)/gi)].map(m => m[1]),
+        ...[...text.matchAll(/([\w.+-]+\.jar)/g)].map(m => m[1]),
+      ].map(norm).filter(w => w.length > 2 && !['minecraft', 'fabricloader', 'java', 'forge', 'neoforge', 'mixinextras', 'fabricapi'].includes(w)))
+      const suspects = p.mods.filter(m => !m.disabled && [...words].some(w => m.files.some(f => norm(path.basename(f)).includes(w)) || norm(m.name) === w))
+      const lines = text.split('\n'), i = lines.findIndex(l => /Description:|Exception|Error:/.test(l))
+      return { file: path.relative(p.target, file), suspects: suspects.map(m => ({ id: m.id, name: m.name })), snippet: lines.slice(Math.max(0, i), i + 8).join('\n') }
+    },
+
+    // Installed Java runtimes (managed ones + common install folders).
+    javaList: () => {
+      const exe = process.platform === 'win32' ? 'javaw.exe' : 'java'
+      const roots = [path.join(root, '..', 'minecraft', 'runtime'),
+        ...(process.platform === 'win32' ? ['ProgramFiles', 'ProgramFiles(x86)'].flatMap(k => process.env[k] ? ['Java', 'Eclipse Adoptium', 'Microsoft', 'Zulu', 'BellSoft', 'Amazon Corretto'].map(v => path.join(process.env[k], v)) : []) : ['/usr/lib/jvm'])]
+      const found = roots.flatMap(r => { try { return fs.readdirSync(r).map(d => path.join(r, d, 'bin', exe)) } catch { return [] } })
+      if (process.env.JAVA_HOME) found.push(path.join(process.env.JAVA_HOME, 'bin', exe))
+      return [...new Set(found)].filter(f => fs.existsSync(f)).map(f => ({ path: f, label: path.basename(path.dirname(path.dirname(f))) }))
+    },
+
+    // ---- Minecraft server (local, optional public address through bore.pub) ----
+    serverStatus: pid => { const s = servers[pid]; return s ? { running: true, online: s.online, address: s.address, lan: s.lan, log: s.log } : { running: false, log: [] } },
+    serverCmd: (pid, cmd) => { servers[pid]?.child.stdin.write(String(cmd).replace(/\n/g, ' ') + '\n'); return true },
+    serverStop: pid => { servers[pid]?.child.stdin.write('stop\n'); return true },
+    serverStart: async (pid, { eula, maxMem = 2048, port = 25565, online = true } = {}) => {
+      if (!eula) throw new Error('Accept the Minecraft EULA first')
+      if (servers[pid]) throw new Error('Server already running')
+      const p = load(pid)
+      if (p.type !== 'modrinth') throw new Error('Servers are for Minecraft profiles')
+      const sdir = path.join(dir(pid), 'server'), s = servers[pid] = { log: [], online: false }
+      const log = line => { s.log.push(line); if (s.log.length > 3000) s.log.shift(); emit('slog', { pid, line }) }
+      const status = () => emit('sstatus', { pid, running: !!servers[pid], online: s.online, address: s.address, lan: s.lan })
+      try {
+        log('Preparing server files…')
+        const plan = await mcl.prepareServer({ mc: p.mc.version, loader: p.mc.loader, loaderVersion: p.mc.loaderVersion, dir: sdir, log })
+        // Server-side mods only: skip Modrinth projects marked server_side "unsupported".
+        const jars = p.mods.filter(m => !m.disabled).flatMap(m => m.files.filter(f => /^mods\/.+\.jar$/i.test(f)).map(f => ({ m, f })))
+        const mr = jars.filter(j => srcOf(p, j.m) === 'modrinth').map(j => j.m.id)
+        const side = mr.length ? Object.fromEntries((await json(`${MR}/projects?ids=${q([...new Set(mr)])}`)).map(x => [x.id, x.server_side])) : {}
+        fs.rmSync(path.join(sdir, 'mods'), { recursive: true, force: true })
+        for (const { m, f } of jars) if (side[m.id] !== 'unsupported') write(sdir, f, fs.readFileSync(inside(files(p), f)))
+        fs.writeFileSync(path.join(sdir, 'eula.txt'), 'eula=true\n')
+        const props = path.join(sdir, 'server.properties')
+        const kv = fs.existsSync(props) ? fs.readFileSync(props, 'utf8') : `motd=${p.name.replace(/[\r\n]/g, '')}\nmax-players=10\n`
+        fs.writeFileSync(props, kv.replace(/^server-port=.*\n?/m, '').replace(/^online-mode=.*\n?/m, '') + `server-port=${+port}\nonline-mode=${!!online}\n`)
+        const child = s.child = spawn(plan.java, [`-Xmx${+maxMem}M`, '-Dlog4j2.formatMsgNoLookups=true', ...plan.args], { cwd: sdir })
+        const out = d => String(d).split(/\r?\n/).filter(Boolean).forEach(l => {
+          log(l)
+          if (!s.online && /Done \(/.test(l)) s.online = true, status()
+        })
+        child.stdout.on('data', out); child.stderr.on('data', out)
+        child.on('exit', code => { s.tunnel?.close(); log(`Server stopped (code ${code})`); delete servers[pid]; status() })
+        s.lan = `${Object.values(os.networkInterfaces()).flat().find(i => i.family === 'IPv4' && !i.internal)?.address || 'localhost'}:${port}`
+        status()
+        return true
+      } catch (e) { delete servers[pid]; status(); throw e }
+    },
+    // Public address for friends outside your network.
+    serverShare: async pid => {
+      const s = servers[pid]
+      if (!s) throw new Error('Start the server first')
+      if (s.address) return s.address
+      const port = +s.lan.split(':')[1]
+      s.tunnel = await tunnel.open(port, { onError: () => { s.address = null; emit('sstatus', { pid, running: true, online: s.online, lan: s.lan }) } })
+      s.address = `${s.tunnel.host}:${s.tunnel.port}`
+      emit('sstatus', { pid, running: true, online: s.online, address: s.address, lan: s.lan })
+      return s.address
+    },
+    // Invite: share code + server address; friends' import adds it to their server list.
+    inviteCode: pid => {
+      const s = servers[pid]
+      if (!s?.address) throw new Error('Share the server online first')
+      return 'MM1' + zlib.deflateRawSync(JSON.stringify({ ...shareData(load(pid)), s: s.address })).toString('base64url')
     },
 
     // ---- Minecraft launcher ----
@@ -281,7 +479,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     stop: pid => { if (running[pid]) running[pid].stopped = true, running[pid].child.kill(); return true },
 
     // Prepare (download game, loader, Java), deploy mods into the instance folder and start Minecraft.
-    play: async (pid, quickPlay = {}) => {
+    play: async (pid, quickPlay = {}, { vanilla } = {}) => {
       if (running[pid]) throw new Error('Already running')
       let p = load(pid)
       if (p.type !== 'modrinth') throw new Error('Only Minecraft profiles launch from here')
@@ -291,7 +489,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       logs[pid] = []
       status('Preparing…')
       const plan = await mcl.prepare({ mc: p.mc.version, loader: p.mc.loader, loaderVersion: p.mc.loaderVersion, log, progress: status })
-      p = await serialDeploy(pid)
+      p = await serialDeploy(pid, { vanilla })
       if (plan.loaderVersion && plan.loaderVersion !== p.mc.loaderVersion) p.mc.loaderVersion = plan.loaderVersion, save(p)
       const opts = { ...settings().launch, ...p.launch }
       const start = Date.now()

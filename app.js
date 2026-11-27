@@ -34,7 +34,9 @@ async function refresh(id) {
 const avatar = p => p.icon ? `<img src="${esc(p.icon)}" alt="">` : p.type === 'modrinth' ? ic('grass', '') : esc(p.name.slice(0, 2).toUpperCase())
 const hours = s => s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m` : `${Math.floor(s / 60)}m`
 const meta = p => (p.type === 'modrinth' ? `Minecraft ${p.mc.version} · ${p.mc.loader}` : `${p.gameName || p.game} · ${SRC[p.type]}`) + (p.playtime ? ` · ${hours(p.playtime)} played` : '')
-const TITLES = { browse: ['Browse', 'compass'], installed: ['Installed', 'package'], worlds: ['Worlds', 'globe'], logs: ['Logs', 'terminal'], options: ['Options', 'sliders'] }
+const TITLES = { browse: ['Browse', 'compass'], installed: ['Installed', 'package'], worlds: ['Worlds', 'globe'], logs: ['Logs', 'terminal'], server: ['Server', 'server'], options: ['Options', 'sliders'] }
+const LINK = 'https://v3rkku1.github.io/mod-manager/join.html#'
+let selected = new Set()
 let running = new Set(), status = {}, filterCache = {}, chips = new Set(), pages = 1
 
 function render() {
@@ -51,7 +53,7 @@ function render() {
   document.body.classList.toggle('mc-banner', mc && !cur.banner)
   document.body.classList.toggle('mr', mc && curSrc() === 'modrinth' && !['following'].includes($('#kind').value))
   $('#kind option[value=following]').hidden = curSrc() !== 'modrinth'
-  if (!mc && tab !== 'browse' && tab !== 'installed') tab = 'browse'
+  if (!mc && !['browse', 'installed', 'options'].includes(tab)) tab = 'browse'
   playButton()
   $('#banner').style.backgroundImage = cur.banner ? `url("${encodeURI(cur.banner)}")` : ''
   $('#pname').textContent = cur.name
@@ -67,7 +69,7 @@ function render() {
   $('main').className = tab
   $('#title').textContent = TITLES[tab][0]
   $('main .hd use').setAttribute('href', '#i-' + TITLES[tab][1])
-  ;({ browse: search, installed: showInstalled, worlds: showWorlds, logs: showLogs, options: showOptions })[tab]()
+  ;({ browse: search, installed: showInstalled, worlds: showWorlds, logs: showLogs, server: showServer, options: showOptions })[tab]()
 
 }
 
@@ -91,16 +93,20 @@ const card = (m, src, installed) => `<div class="mod" data-id="${esc(m.id)}" dat
 
 const row = m => {
   const up = updates[cur.id]?.[m.id], src = srcOf(m)
-  return `<div class="mod ${m.disabled ? 'off' : ''}" data-id="${esc(m.id)}" data-src="${src}">
+  const parents = cur.mods.filter(x => x.deps?.includes(m.id)).map(x => x.name)
+  return `<div class="mod ${m.disabled ? 'off' : ''} ${selected.has(m.id) ? 'sel' : ''}" data-id="${esc(m.id)}" data-src="${src}">
+  <input type="checkbox" class="pick" data-act="select" ${selected.has(m.id) ? 'checked' : ''} title="Select">
   ${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy">` : '<div class="noicon"></div>'}
   <div class="body"><div class="top"><b>${esc(m.name)}</b><span class="tag">${esc(m.version)}</span>
   ${src === 'local' ? '<span class="tag">Local file</span>' : cur.type === 'modrinth' ? `<span class="tag src ${src}">${SRC[src]}</span>` : ''}${m.pack ? '<span class="tag pack">Modpack</span>' : ''}
-  ${up ? `<span class="tag upd">→ ${esc(up)}</span>` : ''}</div>
-  <p>${m.files.length} file${m.files.length === 1 ? '' : 's'}</p></div>
+  ${up ? `<span class="tag upd">→ ${esc(up)}</span>` : ''}${m.pinned ? `<span class="tag">${ic('key', 'i sm')} Pinned</span>` : ''}</div>
+  <p>${m.note ? `📝 ${esc(m.note)} · ` : ''}${parents.length ? `Needed by ${esc(parents.join(', '))} · ` : m.deps?.length ? `Uses ${m.deps.length} dependenc${m.deps.length === 1 ? 'y' : 'ies'} · ` : ''}${m.files.length} file${m.files.length === 1 ? '' : 's'}</p></div>
   <div class="actions">
     ${up ? `<button class="upd" data-act="update">${ic('up')} Update</button>` : ''}
     ${m.pack && src !== 'local' ? `<button class="icon" data-act="unlink" title="Unlink from modpack (stop pack updates)">${ic('x')}</button>` : ''}
     ${src === 'local' ? '' : `<button class="icon" data-act="link" title="Open mod page">${ic('external')}</button>`}
+    <button class="icon ${m.pinned ? 'on' : ''}" data-act="pin" title="${m.pinned ? 'Unpin (allow updates)' : 'Pin this version (skip updates)'}">${ic('key')}</button>
+    <button class="icon" data-act="note" title="Note">${ic('pencil')}</button>
     <button class="icon" data-act="remove" title="Remove">${ic('trash')}</button>
     <input type="checkbox" class="switch" data-act="enable" title="Enabled" ${m.disabled ? '' : 'checked'}>
   </div></div>`
@@ -141,8 +147,20 @@ async function loadFilters() {
 
 function showInstalled() {
   allOffLabel()
-  $('#list').innerHTML = cur.mods.map(row).join('')
-    || `<div class="hint">${ic('package')}<b>No mods yet</b><span>Find some in Browse.</span></div>`
+  selected = new Set([...selected].filter(id => cur.mods.some(m => m.id === id)))
+  const bulk = selected.size ? `<div class="bulk"><b>${selected.size} selected</b><button data-bulk="update">${ic('up')} Update</button><button data-bulk="enable">${ic('check')} Enable</button>
+    <button data-bulk="disable">${ic('x')} Disable</button><button data-bulk="remove" class="danger">${ic('trash')} Remove</button><button data-bulk="none" class="icon">Clear</button></div>` : ''
+  $('#list').innerHTML = '<div id="banners"></div>' + bulk + (cur.mods.map(row).join('')
+    || `<div class="hint">${ic('package')}<b>No mods yet</b><span>Find some in Browse.</span></div>`)
+  banners()
+}
+// Conflicts + "friend updated the pack" banners above the installed list.
+async function banners() {
+  const id = cur.id, [c, f] = await Promise.all([api.conflicts(id).catch(() => []), cur.follow ? api.checkFollow(id).catch(() => null) : null])
+  if (cur?.id !== id || tab !== 'installed') return
+  const d = f?.diff, n = d ? d.add.length + d.change.length + d.remove.length : 0
+  $('#banners').innerHTML = (c.length ? `<div class="banner warn">${ic('alert')}<div><b>${c.length} conflict${c.length > 1 ? 's' : ''}</b>${c.slice(0, 4).map(x => `<p>${x.type === 'file' ? `${esc(x.mods.join(' + '))} both write <code>${esc(x.file)}</code>` : `${esc(x.mods.join(' and '))} are incompatible`}</p>`).join('')}</div></div>` : '')
+    + (n ? `<div class="banner">${ic('refresh')}<div><b>Your friend updated this pack</b><p>+${d.add.length} new · ${d.change.length} changed · -${d.remove.length} removed</p></div><button class="primary" id="syncFollow">Sync now</button></div>` : '')
 }
 
 async function checkUpdates(quiet) {
@@ -214,12 +232,17 @@ async function doInstall(src, modId, vid) {
 
 $('#list').onclick = async e => {
   const pg = e.target.closest('[data-page]'); if (pg) return page = +pg.dataset.page, search(true)
+  const bk = e.target.closest('[data-bulk]')?.dataset.bulk
+  if (bk) return bulkAction(bk)
+  if (e.target.id === 'syncFollow') return run(async () => { e.target.disabled = true; const r = await api.sync(cur.id, `gist:${cur.follow.gist}`, { remove: true }); setProfile(r.profile); render(); toast(r.failed.length ? `Synced, ${r.failed.length} failed` : 'Synced with your friend', !!r.failed.length) })
   const el = e.target.closest('.mod'); if (!el) return
   const modId = el.dataset.id, src = el.dataset.src
   if (e.target.closest('.body')) return src !== 'local' && openDetails(src, modId)
   const b = e.target.closest('[data-act]')
-  if (!b || b.dataset.act === 'enable') return
+  if (!b || b.dataset.act === 'enable' || b.dataset.act === 'select') return
   const id = cur.id, act = b.dataset.act
+  if (act === 'pin') { const m = cur.mods.find(m => m.id === modId); const p = await run(() => api.updateMod(id, modId, { pinned: !m.pinned })); if (p) setProfile(p), showInstalled(); return }
+  if (act === 'note') { const m = cur.mods.find(m => m.id === modId), n = await ask('Note for ' + m.name, m.note || ''); if (n !== null) { const p = await run(() => api.updateMod(id, modId, { note: n })); if (p) setProfile(p), showInstalled() } return }
   if (act === 'link') return api.openExternal(await api.pageUrl(id, src, modId))
   if (act === 'unlink') { const p = await run(() => api.unlinkPack(id, modId)); if (p) setProfile(p), showInstalled(); return }
   const remove = act === 'remove' || (act === 'toggle' && b.classList.contains('done'))
@@ -232,13 +255,14 @@ $('#list').onclick = async e => {
   setProfile(p)
   if (cur?.id !== id) return
   updateBadges()
-  if (tab === 'installed') return showInstalled()
+  if (tab === 'installed') return showInstalled(), remove && askOrphans()
   b.disabled = false
   b.classList.toggle('done', !remove)
   b.innerHTML = remove ? `${ic('download')} Install` : installedBtn
   if (!remove) toast(`Installed ${el.querySelector('b').textContent}`)
 }
 $('#list').onchange = async e => {
+  if (e.target.dataset.act === 'select') { const id = e.target.closest('.mod').dataset.id; e.target.checked ? selected.add(id) : selected.delete(id); return showInstalled() }
   if (e.target.dataset.act !== 'enable') return
   const p = await run(() => api.setDisabled(cur.id, e.target.closest('.mod').dataset.id, !e.target.checked))
   if (p) setProfile(p), e.target.closest('.mod').classList.toggle('off', !e.target.checked)
@@ -348,6 +372,9 @@ document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => b.close
 // Share
 $('#share').onclick = () => run(async () => {
   $('#code').value = await api.exportCode(cur.id)
+  $('#invite').value = LINK + 'import/' + $('#code').value
+  $('#live').value = cur.publish ? LINK + 'follow/' + cur.publish : ''
+  $('#makeLive').lastChild.textContent = cur.publish ? ' Update' : ' Publish'; $('[data-copy=live]').hidden = !cur.publish
   $('#r2code').value = ''; $('[data-copy=r2code]').hidden = true; $('#makeR2').hidden = false
   $('.tsOnly').hidden = cur.type !== 'thunderstore'
   $('#shareDlg').showModal(); $('#code').select()
@@ -356,6 +383,13 @@ $('#shareDlg').addEventListener('click', e => {
   const b = e.target.closest('[data-copy]'); if (!b) return
   navigator.clipboard.writeText($('#' + b.dataset.copy).value).then(() => toast('Copied — paste it to your friends'))
 })
+$('#makeLive').onclick = async () => {
+  const b = $('#makeLive'); b.disabled = true
+  const gid = await run(() => api.publish(cur.id)); b.disabled = false
+  if (!gid) return
+  cur.publish = gid; $('#live').value = LINK + 'follow/' + gid; $('[data-copy=live]').hidden = false; b.lastChild.textContent = ' Update'
+  toast('Live share updated — friends see a Sync button')
+}
 $('#makeR2').onclick = async () => {
   const b = $('#makeR2'); b.disabled = true
   const key = await run(() => api.exportR2(cur.id)); b.disabled = false
@@ -371,7 +405,7 @@ $('#saveFile').onclick = async () => {
 async function openSettings() {
   const s = await api.getSettings(), f = $('#settingsForm')
   f.curseforgeKey.value = s.curseforgeKey || ''; f.nexusKey.value = s.nexusKey || ''; f.nxmHandler.checked = !!s.nxmHandler
-  f.msClientId.value = s.msClientId || ''; f.modrinthToken.value = s.modrinthToken || ''; f.theme.value = s.theme || 'dark'; f.maxMem.value = s.launch?.maxMem || ''
+  f.msClientId.value = s.msClientId || ''; f.githubToken.value = s.githubToken || ''; f.modrinthToken.value = s.modrinthToken || ''; f.theme.value = s.theme || 'dark'; f.maxMem.value = s.launch?.maxMem || ''
   $('#login').hidden = true; showAccounts()
   $('#settingsDlg').showModal()
 }
@@ -379,7 +413,7 @@ $('#settingsForm').onsubmit = async e => {
   e.preventDefault()
   const f = e.target
   if (await run(() => api.saveSettings({ curseforgeKey: f.curseforgeKey.value.trim(), nexusKey: f.nexusKey.value.trim(), nxmHandler: f.nxmHandler.checked,
-    msClientId: f.msClientId.value.trim(), modrinthToken: f.modrinthToken.value.trim(), theme: f.theme.value, launch: { maxMem: f.maxMem.value } })))
+    msClientId: f.msClientId.value.trim(), githubToken: f.githubToken.value.trim(), modrinthToken: f.modrinthToken.value.trim(), theme: f.theme.value, launch: { maxMem: f.maxMem.value } })))
     applyTheme(f.theme.value), $('#settingsDlg').close(), toast('Settings saved'), Object.keys(gameCache).forEach(k => delete gameCache[k])
 }
 
@@ -412,7 +446,7 @@ $('#games').onclick = e => {
   document.querySelectorAll('.game').forEach(g => g.classList.toggle('on', g === b))
 }
 async function openNew(mode = 'thunderstore') {
-  $('#newForm').reset(); picked = null
+  $('#newForm').reset(); picked = null; $('#impPreview').hidden = true
   $(`[name=type][value=${mode}]`).checked = true
   $('#newDlg').showModal(); showGames()
   if (!$('#vers').options.length) loadVersions()
@@ -451,7 +485,9 @@ $('#newForm').onsubmit = async e => {
   if (PICK_TYPES.includes(f.type) && !picked) return toast('Pick a game first', true)
   if (f.type === 'import' && !f.code.trim()) return toast('Paste a share code first', true)
   btn.disabled = true; btn.textContent = f.type === 'import' ? 'Importing mods…' : 'Creating…'
-  const res = await run(() => f.type === 'import' ? api.importCode(f.code, name, cur?.type === 'thunderstore' ? cur.game : null)
+  const into = f.type === 'import' && $('#impInto')?.value
+  const res = await run(() => into ? api.sync(into, f.code, { remove: !!$('#impRemove')?.checked })
+    : f.type === 'import' ? api.importCode(f.code, name, cur?.type === 'thunderstore' ? cur.game : null)
     : f.type === 'terraria' ? api.createProfile({ name: name || 'Terraria', type: 'terraria', game: 'terraria', gameName: 'Terraria', icon: TERRARIA.icon, banner: TERRARIA.banner })
     : f.type === 'modrinth' ? api.createProfile({ name: name || `Minecraft ${f.version}`, type: 'modrinth', mc: { version: f.version, loader: f.loader } })
     : api.createProfile({ name: name || picked.name, type: f.type, game: picked.id, gameId: picked.gameId, gameName: picked.name,
@@ -486,12 +522,14 @@ window.onEvent?.((e, d) => {
   if (e === 'status') {
     if (d.text === null) {
       running.delete(d.pid); delete status[d.pid]
-      if (d.exit) toast(`Minecraft exited with code ${d.exit} — see Logs`, true)
+      if (d.exit) crashHelp(d.pid, d.exit)
       api.listProfiles().then(ps => { ps.forEach(setProfile); if (cur?.id === d.pid) $('#pmeta').textContent = meta(cur) })
     } else if (d.text === 'Running') running.add(d.pid), delete status[d.pid]
     else status[d.pid] = d.text
     if (cur?.id === d.pid) playButton()
   }
+  if (e === 'dl') dlUpdate(d)
+  if ((e === 'slog' || e === 'sstatus') && cur?.id === d.pid && tab === 'server') e === 'slog' ? appendTo($('#slog'), d.line) : showServer()
   if (e === 'log' && cur?.id === d.pid && tab === 'logs' && $('#logsel')?.value === 'live') appendLog(d.line)
 })
 
@@ -531,21 +569,27 @@ async function showWorlds() {
     <button id="savesdir">${ic('folder')} Open saves folder</button>`
 }
 
-function showOptions() {
+async function showOptions() {
   const o = cur.launch || {}
+  if (cur.type !== 'modrinth') return $('#list').innerHTML = `<form class="opts" id="optsForm">
+    <label>STEAM LAUNCH ARGUMENTS <span class="muted small">(used by Play)</span><input name="args" value="${esc(o.args || '')}" placeholder="-windowed -nosplash"></label>
+    <div class="row"><button class="primary">${ic('check')} Save options</button><button type="button" id="playVanilla">${ic('play')} Play without mods</button></div>
+    <p class="muted small">"Play without mods" removes this profile's files from the game folder and starts the game. Your mod list is kept; press Deploy or Play to bring the mods back.</p></form>`
+  const javas = await api.javaList().catch(() => [])
   $('#list').innerHTML = `<form class="opts" id="optsForm">
     <div class="row"><label>MAX MEMORY (MB)<input name="maxMem" type="number" min="512" step="512" value="${o.maxMem || ''}" placeholder="Default"></label>
       <label>MIN MEMORY (MB)<input name="minMem" type="number" min="256" step="256" value="${o.minMem || ''}" placeholder="512"></label></div>
     <div class="row"><label>WINDOW WIDTH<input name="width" type="number" value="${o.width || ''}" placeholder="854"></label>
       <label>WINDOW HEIGHT<input name="height" type="number" value="${o.height || ''}" placeholder="480"></label></div>
     <label class="check"><input type="checkbox" name="fullscreen" class="switch" ${o.fullscreen ? 'checked' : ''}> Start in fullscreen</label>
-    <label>JAVA EXECUTABLE <span class="muted small">(empty = automatic)</span><input name="java" value="${esc(o.java || '')}" placeholder="Managed by the app"></label>
+    <label>JAVA <select id="javaPick"><option value="">Automatic (recommended)</option>${javas.map(j => `<option value="${esc(j.path)}" ${o.java === j.path ? 'selected' : ''}>${esc(j.label)} — ${esc(j.path)}</option>`).join('')}<option value="custom" ${o.java && !javas.some(j => j.path === o.java) ? 'selected' : ''}>Custom path…</option></select>
+      <input name="java" value="${esc(o.java || '')}" placeholder="Path to java / javaw.exe" ${o.java && !javas.some(j => j.path === o.java) ? '' : 'hidden'}></label>
     <label>JVM ARGUMENTS<input name="jvmArgs" value="${esc(o.jvmArgs || '')}" placeholder="-XX:+UseG1GC"></label>
     <label>ENVIRONMENT VARIABLES <span class="muted small">(KEY=value per line)</span><textarea name="env" rows="3">${esc(o.env || '')}</textarea></label>
     <label>PRE-LAUNCH COMMAND<input name="preLaunch" value="${esc(o.preLaunch || '')}"></label>
     <label>WRAPPER COMMAND<input name="wrapper" value="${esc(o.wrapper || '')}" placeholder="e.g. gamemoderun"></label>
     <label>POST-EXIT COMMAND<input name="postExit" value="${esc(o.postExit || '')}"></label>
-    <div class="row"><button class="primary">${ic('check')} Save options</button></div>
+    <div class="row"><button class="primary">${ic('check')} Save options</button><button type="button" id="playVanilla">${ic('play')} Play without mods</button></div>
     <h4 class="muted">INSTANCE</h4>
     <div class="row"><button type="button" id="optRepair">${ic('wrench')} Repair game files</button><button type="button" id="optExport">${ic('file')} Export .mrpack</button>
       <button type="button" id="optDup">${ic('copy')} Duplicate</button><button type="button" id="optDir">${ic('folder')} Open folder</button></div>
@@ -565,11 +609,22 @@ $('#list').addEventListener('click', async e => {
   if (t.id === 'optExport') { const f = await api.saveFile(`${cur.name.replace(/[^\w -]/g, '')}.mrpack`, 'mrpack'); if (f) { const n = await run(() => api.exportMrpack(id, f)); if (n != null) toast(`Exported (${n} Modrinth downloads, rest bundled)`) } }
   if (t.id === 'optDup') { const p = await run(() => api.duplicate(id)); if (p) await refresh(p.id), toast('Duplicated') }
   if (t.id === 'optDir') api.openProfileFolder(id)
+  if (t.id === 'playVanilla') run(async () => {
+    if (cur.type !== 'modrinth') { await api.launch(id, { vanilla: true }); return toast('Starting the game without mods') }
+    status[id] = 'Preparing…'; playButton()
+    try { await api.play(id, {}, { vanilla: true }); running.add(id) } finally { if (!running.has(id)) delete status[id]; playButton() }
+  })
+  if (t.id === 'srvStart') serverStart(t)
+  if (t.id === 'srvStop') api.serverStop(id)
+  if (t.id === 'srvShare') { t.disabled = true; const a = await run(() => api.serverShare(id)); t.disabled = false; if (a) showServer() }
+  if (t.id === 'srvInvite') { const c = await run(() => api.inviteCode(id)); if (c) navigator.clipboard.writeText(LINK + 'import/' + c).then(() => toast('Invite link copied — friends get the mods and the server in their list')) }
+  if (t.dataset.copyText) navigator.clipboard.writeText(t.dataset.copyText).then(() => toast('Copied'))
 })
 $('#list').addEventListener('submit', async e => {
   if (e.target.id !== 'optsForm') return
   e.preventDefault()
-  const f = Object.fromEntries(new FormData(e.target)); f.fullscreen = e.target.fullscreen.checked
+  const f = Object.fromEntries(new FormData(e.target)); if (e.target.fullscreen) f.fullscreen = e.target.fullscreen.checked
+  if ($('#javaPick') && $('#javaPick').value !== 'custom') f.java = $('#javaPick').value
   const p = await run(() => api.updateProfile(cur.id, { launch: f })); if (p) setProfile(p), toast('Options saved')
 })
 
@@ -650,3 +705,125 @@ api.getSettings().then(s => applyTheme(s.theme))
 api.running?.().then(r => { running = new Set(r); playButton() })
 
 refresh()
+
+// ---- Bulk actions, orphans, crash helper, download queue ----
+async function bulkAction(kind) {
+  const id = cur.id, ids = [...selected]
+  if (kind === 'none') return selected.clear(), showInstalled()
+  if (kind === 'remove' && !confirm(`Remove ${ids.length} mods?`)) return
+  for (const mid of ids) {
+    const p = await run(() => kind === 'update' ? api.update(id, mid) : kind === 'remove' ? api.uninstall(id, mid) : api.setDisabled(id, mid, kind === 'disable'))
+    if (p) setProfile(p)
+  }
+  selected.clear(); if (cur?.id === id) updateBadges(), showInstalled()
+  if (kind === 'remove') askOrphans()
+}
+async function askOrphans() {
+  const id = cur.id, o = await api.orphans(id).catch(() => [])
+  if (!o.length || !confirm(`These dependencies are no longer needed:\n${o.map(m => '• ' + m.name).join('\n')}\n\nRemove them too?`)) return
+  for (const m of o) { const p = await run(() => api.uninstall(id, m.id)); if (p) setProfile(p) }
+  if (cur?.id === id) updateBadges(), showInstalled()
+}
+
+async function crashHelp(pid, code) {
+  const p = profiles.find(p => p.id === pid), r = await api.analyzeCrash(pid).catch(() => ({ suspects: [] }))
+  $('#crashBody').innerHTML = `<p class="muted center">${esc(p?.name)} closed with exit code ${esc(code)}.</p>
+    ${r.suspects.length ? `<h3>LIKELY CAUSE</h3>${r.suspects.map(m => `<div class="acct"><b>${esc(m.name)}</b><button class="primary" data-crash-off="${esc(m.id)}">Disable & retry</button></div>`).join('')}`
+      : '<p>No specific mod found. Check the log, or try "Play without mods" in Options.</p>'}
+    ${r.snippet ? `<pre class="snip">${esc(r.snippet)}</pre>` : ''}
+    <menu><button data-crash-logs>Open logs</button><button class="primary" data-close-crash>Close</button></menu>`
+  $('#crashDlg').dataset.pid = pid; $('#crashDlg').showModal()
+}
+$('#crashDlg').addEventListener('click', async e => {
+  const pid = $('#crashDlg').dataset.pid
+  if (e.target.closest('[data-close-crash]')) return $('#crashDlg').close()
+  if (e.target.closest('[data-crash-logs]')) { $('#crashDlg').close(); cur = profiles.find(p => p.id === pid); tab = 'logs'; return render() }
+  const off = e.target.closest('[data-crash-off]')?.dataset.crashOff
+  if (!off) return
+  $('#crashDlg').close()
+  const p = await run(() => api.setDisabled(pid, off, true)); if (!p) return
+  setProfile(p); cur = p; render(); toast('Mod disabled — starting again')
+  $('#play').click()
+})
+
+const dls = {}
+function dlUpdate(d) {
+  const q = $('#dlq')
+  if (d.done) delete dls[d.id]; else dls[d.id] = d
+  q.hidden = !Object.keys(dls).length
+  q.innerHTML = `<b>${ic('download', 'i sm')} Downloads</b>` + Object.values(dls).map(x => `<div class="dl"><span>${esc(x.name)}</span>
+    <small>${x.total ? Math.round(x.got / x.total * 100) + '%' : ''} · ${(x.speed / 1e6).toFixed(1)} MB/s</small><div class="bar"><i data-w="${x.total ? x.got / x.total * 100 : 0}"></i></div></div>`).join('')
+  q.querySelectorAll('[data-w]').forEach(i => i.style.width = i.dataset.w + '%') // CSP blocks inline style attributes
+}
+
+// ---- Minecraft server ----
+const appendTo = (v, line) => { if (!v) return; const stick = v.scrollTop + v.clientHeight >= v.scrollHeight - 30; const d = document.createElement('div'); d.textContent = line; d.className = logClass(line); v.append(d); if (stick) v.scrollTop = v.scrollHeight }
+async function showServer() {
+  const id = cur.id, s = await api.serverStatus(id), o = cur.server || {}
+  if (cur.id !== id || tab !== 'server') return
+  const state = !s.running ? 'Stopped' : s.online ? 'Online' : 'Starting…'
+  $('#list').innerHTML = `<div class="srv">
+    <div class="srvhead"><span class="dot ${s.online ? 'on' : s.running ? 'mid' : ''}"></span><b>${state}</b>
+      ${s.running ? `<button id="srvStop" class="danger">${ic('stop')} Stop</button>` : ''}</div>
+    ${s.running ? `<div class="addr">
+        <div><small>SAME WI-FI / LAN</small><code>${esc(s.lan || '')}</code><button class="icon" data-copy-text="${esc(s.lan || '')}">${ic('copy')}</button></div>
+        <div><small>ONLINE (FRIENDS ANYWHERE)</small>${s.address ? `<code>${esc(s.address)}</code><button class="icon" data-copy-text="${esc(s.address)}">${ic('copy')}</button>`
+          : `<button id="srvShare" ${s.online ? '' : 'disabled'}>${ic('globe')} Get public address</button>`}</div>
+        ${s.address ? `<button id="srvInvite" class="primary">${ic('share')} Copy invite link (mods + server)</button>` : ''}</div>`
+    : `<form class="opts" id="srvForm">
+        <div class="row"><label>MEMORY (MB)<input name="maxMem" type="number" min="1024" step="512" value="${o.maxMem || 2048}"></label>
+        <label>PORT<input name="port" type="number" min="1024" max="65535" value="${o.port || 25565}"></label></div>
+        <label class="check"><input type="checkbox" name="online" class="switch" checked> Only players with real Minecraft accounts (online mode)</label>
+        <label class="check"><input type="checkbox" name="eula" class="switch"> I agree to the <a data-href="https://aka.ms/MinecraftEULA">Minecraft EULA</a></label>
+        <button type="button" id="srvStart" class="primary">${ic('play')} Start server</button>
+        <p class="muted small">Runs ${esc(cur.mc.loader)} ${esc(cur.mc.version)} on this PC with this profile's server-side mods (client-only Modrinth mods are skipped).
+          "Get public address" opens a free bore.pub tunnel so friends can join without port forwarding.</p></form>`}
+    <div id="slog" class="console">${s.log.map(l => `<div class="${logClass(l)}">${esc(l)}</div>`).join('')}</div>
+    <input id="scmd" placeholder="Type a server command (e.g. op YourName) and press Enter" ${s.running ? '' : 'disabled'}></div>`
+  const v = $('#slog'); v.scrollTop = v.scrollHeight
+}
+async function serverStart(btn) {
+  const f = $('#srvForm'), o = { eula: f.eula.checked, maxMem: f.maxMem.value, port: f.port.value, online: f.online.checked }
+  if (!o.eula) return toast('Accept the Minecraft EULA first', true)
+  btn.disabled = true; btn.innerHTML = `${ic('refresh', 'i spin')} Preparing…`
+  cur.server = o
+  if (!await run(() => api.serverStart(cur.id, o))) return showServer()
+  showServer()
+}
+$('#list').addEventListener('keydown', e => {
+  if (e.target.id !== 'scmd' || e.key !== 'Enter' || !e.target.value.trim()) return
+  api.serverCmd(cur.id, e.target.value); e.target.value = ''
+})
+$('#list').addEventListener('change', e => { if (e.target.id === 'javaPick') { const i = $('#optsForm [name=java]'); i.hidden = e.target.value !== 'custom'; if (!i.hidden) i.focus() } })
+
+// ---- Import preview (diff against an existing profile) ----
+let previewTimer
+$('#newForm').elements.code.addEventListener('input', () => { clearTimeout(previewTimer); previewTimer = setTimeout(importPreview, 400) })
+async function importPreview() {
+  const code = $('#newForm').elements.code.value.trim(), box = $('#impPreview')
+  if (!code) return box.hidden = true
+  const pv = await api.preview(code).catch(() => null)
+  if (!pv) return box.hidden = false, box.innerHTML = '<p class="muted small">Not a valid code yet…</p>'
+  const same = profiles.filter(p => p.type === pv.type && (pv.type === 'modrinth' ? p.mc?.version === pv.mc?.version && p.mc?.loader === pv.mc?.loader : p.game === pv.game))
+  box.hidden = false
+  box.innerHTML = `<div class="banner"><div><b>${esc(pv.name || 'Shared profile')}</b><p>${pv.count} mods · ${esc(pv.type === 'modrinth' ? `Minecraft ${pv.mc?.version} ${pv.mc?.loader}` : pv.gameName || pv.game)}</p></div></div>
+    ${same.length ? `<label>IMPORT INTO<select id="impInto"><option value="">A new profile</option>${same.map(p => `<option value="${p.id}">Sync into "${esc(p.name)}"</option>`).join('')}</select></label><div id="impDiff"></div>` : ''}`
+  $('#impInto')?.addEventListener('change', showDiff)
+}
+async function showDiff() {
+  const pid = $('#impInto').value, el = $('#impDiff')
+  if (!pid) return el.innerHTML = ''
+  const d = (await run(() => api.preview($('#newForm').elements.code.value.trim(), pid)))?.diff; if (!d) return
+  const list = (t, a) => a.length ? `<p><b>${t} (${a.length})</b> ${a.slice(0, 8).map(esc).join(', ')}${a.length > 8 ? '…' : ''}</p>` : ''
+  el.innerHTML = `<div class="diff">${list('+ New', d.add)}${list('~ Different version', d.change)}${list('- Not in their list', d.remove)}${!d.add.length && !d.change.length && !d.remove.length ? '<p>Already identical.</p>' : ''}</div>
+    ${d.remove.length ? '<label class="check"><input type="checkbox" id="impRemove" class="switch"> Remove mods not in their list</label>' : ''}`
+}
+
+// ---- Share links: modmanager://import/<code>, modmanager://follow/<gist> ----
+window.onLink?.(link => run(async () => {
+  const [, kind, value] = link.match(/^modmanager:\/\/(import|follow)\/([^/?#]+)/) || []
+  if (!value) throw new Error('Unknown link')
+  toast(kind === 'follow' ? 'Following friend’s profile…' : 'Importing shared profile…')
+  const res = kind === 'follow' ? await api.follow(decodeURIComponent(value)) : await api.importCode(decodeURIComponent(value))
+  created(res)
+}))

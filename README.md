@@ -30,7 +30,8 @@ Build locally: `npm run dist` (installer needs Windows or Wine; `npx electron-bu
 
 1. **+** → pick a source and a game (or Minecraft version + loader), or **Import** a code / `.mmpack` file.
 2. **Browse** → search, sort, install. Click a mod for its description, screenshots and older versions.
-3. **Installed** → toggle mods on/off (or **Disable all** to play the unmodded game), update one or all, remove.
+3. **Installed** → select several for bulk update/enable/disable/remove, pin versions, add notes, see which mod needs which dependency (unused ones are offered for removal), conflict warnings.
+   toggle mods on/off (or **Disable all** to play the unmodded game), update one or all, remove.
    Browse has category chips, sections (Thunderstore) and page numbers.
 4. Target folder: the target icon finds the game in your Steam libraries; the pencil picks it by hand.
 5. **Deploy** copies enabled mods there. **Play** deploys and starts the game (Steam or Minecraft Launcher).
@@ -38,6 +39,16 @@ Build locally: `npm run dist` (installer needs Windows or Wine; `npx electron-bu
    - *Mod list code* (`MM1…`): short, paste in Discord.
    - *Code with configs* (Thunderstore): uploads your BepInEx configs; also works in r2modman.
    - *Save as file* (`.mmpack`): mods + configs, send the file.
+
+## Sharing with friends
+
+- **Invite link**: Share > Invite link. Friends click it in Discord and the app imports the profile. (Needs GitHub Pages on this repo: Settings > Pages > deploy from branch, folder `/docs`.)
+- **Live share**: Share > Publish (needs a GitHub token with `gist` scope in Settings). Friends who open the link follow your profile and see "Your friend updated this pack > Sync now" whenever you press Update.
+- **Import preview**: pasting a code shows the pack and lets you sync it into an existing profile, with a list of new / changed / extra mods.
+
+## Minecraft server
+
+Server tab (Minecraft profiles): accept the EULA, Start. Runs Vanilla, Fabric, Forge or NeoForge with this profile's server-side mods (client-only Modrinth mods are skipped), with a live console. "Get public address" opens a free bore.pub tunnel so friends can join without port forwarding; "Copy invite link" sends the mods and the server address, which is added to their server list.
 
 ## Minecraft launcher
 

@@ -4,11 +4,13 @@ const { autoUpdater } = require('electron-updater')
 
 let win
 const nxmArg = argv => argv.find(a => a.startsWith('nxm://'))
+const linkArg = argv => argv.find(a => a.startsWith('modmanager://'))
 if (!app.requestSingleInstanceLock()) app.quit()
 // Nexus "Mod Manager Download" opens nxm:// links; Windows starts a 2nd instance with the link as an argument.
 app.on('second-instance', (_, argv) => {
   if (win) win.isMinimized() && win.restore(), win.focus()
   const link = nxmArg(argv); if (link) win?.webContents.send('nxm', link)
+  const mm = linkArg(argv); if (mm) win?.webContents.send('link', mm)
 })
 
 app.whenReady().then(() => {
@@ -20,6 +22,8 @@ app.whenReady().then(() => {
   })
   const nxmProtocol = on => app.isPackaged && (on ? app.setAsDefaultProtocolClient('nxm') : app.removeAsDefaultProtocolClient('nxm'))
   nxmProtocol(!!core.getSettings().nxmHandler)
+  // Share links: modmanager://import/<code> and modmanager://follow/<gist id>
+  if (app.isPackaged) app.setAsDefaultProtocolClient('modmanager')
   for (const [k, fn] of Object.entries(core)) ipcMain.handle(k, async (_, ...a) => {
     try { return await fn(...a) } catch (e) { if (e.open) shell.openExternal(e.open); throw e }
   })
@@ -41,7 +45,10 @@ app.whenReady().then(() => {
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   })
   win.loadFile('index.html')
-  win.webContents.once('did-finish-load', () => { const l = nxmArg(process.argv); if (l) win.webContents.send('nxm', l) })
+  win.webContents.once('did-finish-load', () => {
+    const l = nxmArg(process.argv); if (l) win.webContents.send('nxm', l)
+    const m = linkArg(process.argv); if (m) win.webContents.send('link', m)
+  })
 
   // Checks GitHub Releases, downloads in background, installs on quit. Only the installed (NSIS) build can self-update.
   autoUpdater.on('update-downloaded', i => win.webContents.send('updateReady', i.version))

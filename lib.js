@@ -1,4 +1,4 @@
-// Shared helpers: HTTP, safe paths, archive extraction. Skipped: retry/backoff, download progress.
+// Shared helpers: HTTP, safe paths, archive extraction. Skipped: retry/backoff.
 const fs = require('fs'), path = require('path')
 const { unzipSync } = require('fflate')
 
@@ -13,7 +13,21 @@ async function get(url, headers = {}, init = {}) {
   return r
 }
 const json = (url, headers, init) => get(url, headers, init).then(r => r.json())
-const bytes = (url, headers) => get(url, headers).then(async r => new Uint8Array(await r.arrayBuffer()))
+// Downloads over 256 KB report progress to the hook (download queue UI).
+const progress = { hook: null }
+let dlId = 0
+const bytes = async (url, headers) => {
+  const r = await get(url, headers), total = +r.headers.get('content-length') || 0
+  if (!progress.hook || total < 256e3) return new Uint8Array(await r.arrayBuffer())
+  const id = ++dlId, name = decodeURIComponent(url.split('?')[0].split('/').filter(Boolean).pop() || 'download'), start = Date.now(), chunks = []
+  let got = 0, last = 0
+  for await (const c of r.body) {
+    chunks.push(c); got += c.length
+    if (Date.now() - last > 250) last = Date.now(), progress.hook({ id, name, got, total, speed: got / ((Date.now() - start) / 1000 || 1) })
+  }
+  progress.hook({ id, name, got, total, done: true })
+  return new Uint8Array(Buffer.concat(chunks))
+}
 const q = s => encodeURIComponent(typeof s === 'string' ? s : JSON.stringify(s))
 
 // Resolve rel inside base; throws on zip-slip / absolute paths from untrusted archives or share codes.
@@ -71,4 +85,4 @@ async function extract(name, data) {
   return { [path.basename(name)]: data }
 }
 
-module.exports = { get, json, bytes, q, inside, write, remove, walk, extract }
+module.exports = { progress, get, json, bytes, q, inside, write, remove, walk, extract }

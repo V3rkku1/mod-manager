@@ -72,6 +72,7 @@ module.exports = ({ files, settings }) => {
       return {
         mod: { id: proj.id, name: proj.title, version: v.version_number, vid: v.id, icon: proj.icon_url, files: [rel] },
         deps: v.dependencies.filter(d => d.dependency_type === 'required' && d.project_id).map(d => ({ id: d.project_id })),
+        incompat: v.dependencies.filter(d => d.dependency_type === 'incompatible' && d.project_id).map(d => d.project_id),
       }
     },
 

@@ -3,7 +3,7 @@
 const fs = require('fs'), path = require('path'), crypto = require('crypto'), zlib = require('zlib')
 const { spawn, execFileSync } = require('child_process')
 const { unzipSync } = require('fflate')
-const { json, bytes } = require('./lib')
+const { json, bytes, walk } = require('./lib')
 
 const MANIFEST = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json'
 const RUNTIMES = 'https://launchermeta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json'
@@ -211,7 +211,40 @@ module.exports = base => {
     return child
   }
 
-  return { versions, latestLoader, prepare, launch, command, runtime, mavenPath, allowed }
+  // Dedicated server in dir; returns { java, args } to spawn with cwd = dir.
+  async function prepareServer({ mc, loader, loaderVersion, dir, log }) {
+    await vanilla(mc)
+    const v = await resolve(mc), java = await runtime(v.javaVersion)
+    fs.mkdirSync(dir, { recursive: true })
+    if (!loader || loader === 'vanilla') {
+      await download(v.downloads.server.url, path.join(dir, 'server.jar'), v.downloads.server.sha1)
+      return { java, args: ['-jar', 'server.jar', 'nogui'] }
+    }
+    const lv = loaderVersion || await latestLoader(mc, loader)
+    if (loader === 'fabric') {
+      const iv = (await json('https://meta.fabricmc.net/v2/versions/installer')).find(i => i.stable)?.version
+      await download(`https://meta.fabricmc.net/v2/versions/loader/${mc}/${lv}/${iv}/server/jar`, path.join(dir, 'fabric-server-launch.jar'))
+      return { java, args: ['-jar', 'fabric-server-launch.jar', 'nogui'] }
+    }
+    if (loader !== 'forge' && loader !== 'neoforge') throw new Error(`Servers for ${loader} are not supported yet`)
+    const argsFile = () => walk(path.join(dir, 'libraries')).find(f => /(net\/minecraftforge\/forge|net\/neoforged\/neoforge)\/.*\/(win|unix)_args\.txt$/.test(f) && f.includes(process.platform === 'win32' ? 'win_args' : 'unix_args') && f.includes(lv))
+    if (!argsFile()) {
+      const url = loader === 'forge' ? `https://maven.minecraftforge.net/net/minecraftforge/forge/${mc}-${lv}/forge-${mc}-${lv}-installer.jar` : `https://maven.neoforged.net/releases/net/neoforged/neoforge/${lv}/neoforge-${lv}-installer.jar`
+      const installer = path.join(base, 'installers', path.basename(url))
+      await download(url, installer)
+      log?.(`Installing ${loader} server ${lv}…`)
+      await new Promise((ok, fail) => {
+        const p = spawn(java, ['-jar', installer, '--installServer', dir], { cwd: dir })
+        p.stdout.on('data', d => log?.(String(d).trimEnd())); p.stderr.on('data', d => log?.(String(d).trimEnd()))
+        p.on('exit', c => c === 0 ? ok() : fail(new Error(`${loader} server installer failed (exit ${c})`)))
+      })
+    }
+    const af = argsFile()
+    if (!af) throw new Error(`${loader} server files not found after install`)
+    return { java, args: [`@libraries/${af}`, 'nogui'] }
+  }
+
+  return { prepareServer, versions, latestLoader, prepare, launch, command, runtime, mavenPath, allowed }
 }
 
 // servers.dat is an uncompressed NBT compound; reads just names + IPs.
@@ -241,3 +274,10 @@ module.exports.readServers = file => {
 }
 // Gzipped log -> text
 module.exports.readLog = file => file.endsWith('.gz') ? zlib.gunzipSync(fs.readFileSync(file)).toString() : fs.readFileSync(file, 'utf8')
+// Writes servers.dat (uncompressed NBT) with just name + ip per entry.
+module.exports.writeServers = (file, list) => {
+  const str = s => { const b = Buffer.from(String(s)), h = Buffer.alloc(2); h.writeUInt16BE(b.length); return Buffer.concat([h, b]) }
+  const n = Buffer.alloc(4); n.writeInt32BE(list.length)
+  fs.writeFileSync(file, Buffer.concat([Buffer.from([10]), str(''), Buffer.from([9]), str('servers'), Buffer.from([10]), n,
+    ...list.flatMap(s => [Buffer.from([8]), str('name'), str(s.name), Buffer.from([8]), str('ip'), str(s.ip), Buffer.from([0])]), Buffer.from([0])]))
+}

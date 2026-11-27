@@ -66,7 +66,8 @@
         <button data-tab="installed"><svg class="i"><use href="#i-package"/></svg> Installed <em id="count"></em></button>
         <button data-tab="worlds" class="mcOnly"><svg class="i"><use href="#i-globe"/></svg> Worlds</button>
         <button data-tab="logs" class="mcOnly"><svg class="i"><use href="#i-terminal"/></svg> Logs</button>
-        <button data-tab="options" class="mcOnly"><svg class="i"><use href="#i-sliders"/></svg> Options</button>
+        <button data-tab="server" class="mcOnly"><svg class="i"><use href="#i-server"/></svg> Server</button>
+        <button data-tab="options"><svg class="i"><use href="#i-sliders"/></svg> Options</button>
       </div>
       <div id="foot">
         <div class="target">
@@ -142,6 +143,7 @@
     <p class="terr muted small">tModLoader mods from the Steam Workshop. Needs tModLoader installed (free on Steam).</p>
     <div class="imp">
       <label>SHARE CODE<textarea name="code" rows="3" placeholder="Paste an MM1… code, or an r2modman profile code"></textarea></label>
+      <div id="impPreview" hidden></div>
       <div class="row"><button type="button" id="importFile"><svg class="i"><use href="#i-file"/></svg> Open .mmpack / .mrpack</button>
       <button type="button" id="importFolder" title="Prism, MultiMC, CurseForge, ATLauncher or GDLauncher instance"><svg class="i"><use href="#i-folder"/></svg> Launcher instance</button></div>
     </div>
@@ -154,6 +156,9 @@
   <button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
   <h2>Share with friends</h2>
   <p class="muted center">Friends paste a code in <b>Import</b>, or open the file.</p>
+  <label>INVITE LINK <span class="muted">(one click import, paste in Discord)</span><div class="codebox"><input id="invite" readonly><button class="primary" data-copy="invite"><svg class="i"><use href="#i-copy"/></svg> Copy</button></div></label>
+  <label>LIVE SHARE <span class="muted">(friends get your changes with one Sync click)</span>
+    <div class="codebox"><input id="live" readonly placeholder="Needs a GitHub token in Settings"><button id="makeLive"><svg class="i"><use href="#i-up"/></svg> Publish</button><button class="primary" data-copy="live" hidden><svg class="i"><use href="#i-copy"/></svg> Copy</button></div></label>
   <label>MOD LIST CODE<div class="codebox"><input id="code" readonly><button class="primary" data-copy="code"><svg class="i"><use href="#i-copy"/></svg> Copy</button></div></label>
   <label class="tsOnly">CODE WITH CONFIGS <span class="muted">(also works in r2modman)</span>
     <div class="codebox"><input id="r2code" readonly placeholder="Uploads your config files to Thunderstore"><button id="makeR2"><svg class="i"><use href="#i-up"/></svg> Create</button><button class="primary" data-copy="r2code" hidden><svg class="i"><use href="#i-copy"/></svg> Copy</button></div></label>
@@ -177,6 +182,8 @@
       <a class="muted small" data-href="https://modrinth.com/settings/pats">Create one at modrinth.com/settings/pats</a></label>
     <label>CURSEFORGE API KEY<input name="curseforgeKey" type="password" autocomplete="off" placeholder="Needed for CurseForge mods">
       <a class="muted small" data-href="https://console.curseforge.com/">Get a free key at console.curseforge.com</a></label>
+    <label>GITHUB TOKEN <span class="muted">(optional, for Live share)</span><input name="githubToken" type="password" autocomplete="off" placeholder="Token with gist scope">
+      <a class="muted small" data-href="https://github.com/settings/tokens/new?scopes=gist&description=Mod%20Manager">Create one (only gist access)</a></label>
     <label>NEXUS MODS API KEY<input name="nexusKey" type="password" autocomplete="off" placeholder="Needed to download from Nexus">
       <a class="muted small" data-href="https://www.nexusmods.com/users/myaccount?tab=api">Find it under Account → API access</a></label>
     <label class="check"><input type="checkbox" name="nxmHandler" class="switch"> Handle Nexus “Mod Manager Download” buttons</label>
@@ -203,6 +210,9 @@
   <div id="detail"></div>
 </dialog>
 
+<dialog id="crashDlg"><button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
+  <h2>Minecraft crashed</h2><div id="crashBody"></div></dialog>
+<div id="dlq" hidden></div>
 <div id="tip" hidden></div>
 <div id="toasts"></div>
 <script src="node_modules/marked/lib/marked.umd.js"></script>

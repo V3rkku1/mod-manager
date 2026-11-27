@@ -56,7 +56,26 @@ const count = dir => fs.existsSync(path.join(tmp, dir)) ? fs.readdirSync(path.jo
   await core.setAllDisabled(mc.id, true); await core.deploy(mc.id)
   assert.strictEqual(count('game/mods'), 0, 'disable all')
   await core.setAllDisabled(mc.id, false)
+  // Pins, orphans, conflicts, preview/sync, vanilla deploy, crash helper
+  await core.updateMod(mc.id, 'mOgUt4GM', { pinned: true, note: 'keep' })
+  assert((await core.listProfiles()).find(x => x.id === mc.id).mods.find(m => m.id === 'mOgUt4GM').pinned, 'pin')
+  assert.deepStrictEqual(await core.conflicts(mc.id), [], 'no conflicts')
+  const other = await core.createProfile({ name: 'Other', type: 'modrinth', mc: { version: '1.21.1', loader: 'fabric' } })
+  await core.install(other.id, 'modrinth', 'AANobbMI') // Sodium
+  const pv = await core.preview(code, other.id)
+  assert(pv.diff.add.includes('mOgUt4GM') && pv.diff.remove.includes('Sodium'), 'diff')
+  const synced = (await core.sync(other.id, code, { remove: true })).profile
+  assert.deepStrictEqual(synced.mods.map(m => m.vid).sort(), p.mods.map(m => m.vid).sort(), 'sync matches')
+  await assert.rejects(core.sync(other.id, await core.exportCode(ts.id)), /different game/)
+  await core.deploy(mc.id, { vanilla: true })
+  assert.strictEqual(count('game/mods'), 0, 'vanilla deploy')
+  assert((await core.listProfiles()).find(x => x.id === mc.id).mods.some(m => !m.disabled), 'vanilla keeps flags')
+  write(path.join(tmp, 'game/crash-reports/crash-1.txt'), 'Description: Mod loading\nSuspected Mods: Mod Menu (modmenu)\nException')
+  const cr = await core.analyzeCrash(mc.id)
+  assert.deepStrictEqual(cr.suspects.map(m => m.name), ['Mod Menu'], 'crash suspects')
+  await core.updateMod(mc.id, 'mOgUt4GM', { pinned: false })
   p = await core.uninstall(mc.id, 'mOgUt4GM')
+  assert((await core.orphans(mc.id)).length >= 1, 'orphaned deps after removing parent')
 
   // Modrinth modpack (small fabric pack)
   const packs = await core.search(mc.id, 'modrinth', '', 1, { kind: 'modpack' })
