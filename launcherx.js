@@ -4,7 +4,7 @@ const fs = require('fs'), path = require('path'), os = require('os')
 const { execFile, spawn } = require('child_process')
 
 const defaults = root => ({
-  name: 'GTA 6', root: path.join(root, 'projects'), game: '', autoUpdate: true,
+  enabled: false, name: 'GTA 6', root: path.join(root, 'projects'), game: '', autoUpdate: true,
   projects: [
     { name: 'VIctory-Belobug-AMD', repo: 'https://github.com/Belobug/VIctory-Belobug-AMD', branch: 'a-publier',
       build: ['cargo build --locked --profile diag -p victory --features diagnostics'], run: ".\\scripts\\play.ps1 -Exe '{game}'" },
@@ -75,6 +75,7 @@ module.exports = dataDir => {
       if ('game' in patch) c.game = String(patch.game || '')
       if ('autoUpdate' in patch) c.autoUpdate = !!patch.autoUpdate
       if (patch.name?.trim()) c.name = String(patch.name).trim().slice(0, 40)
+      if ('enabled' in patch) c.enabled = !!patch.enabled // shown in the left bar (added with + > Recomps)
       return save(c)
     },
     // Add or replace (by `was`, the old name) a project.

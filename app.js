@@ -43,15 +43,15 @@ const meta = p => (p.type === 'modrinth' ? `Minecraft ${p.mc.version} · ${p.mc.
 const TITLES = { browse: ['Browse', 'compass'], installed: ['Installed', 'package'], worlds: ['Worlds', 'globe'], logs: ['Logs', 'terminal'], server: ['Server', 'server'], options: ['Options', 'sliders'] }
 const SITE = 'https://v3rkku1.github.io/mod-manager/', LINK = SITE + 'join.html#'
 let selected = new Set()
-let lxName = 'GTA 6', lxView = false // the Launcher-X instance in the left bar: its name, and whether its page is open
+let lxName = 'GTA 6', lxView = false, lxOn = false // the Recomps (Launcher-X) instance: its name, whether its page is open, whether it was added
 let setupLeft = 0, running = new Set(), status = {}, filterCache = {}, chips = new Set(), pages = 1, remembering = true
 
 function render() {
   const groups = [...new Set(profiles.map(p => p.group || ''))].sort()
   $('#rail').innerHTML = groups.map(g => (g ? `<div class="sep"></div><div class="rail-group" title="${esc(g)}">${esc(g)}</div>` : '')
     + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id && !lxView ? 'on' : ''} ${running.has(p.id) ? 'playing' : ''}" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}${Object.keys(updates[p.id] || {}).length ? `<i class="rbadge">${Object.keys(updates[p.id]).length}</i>` : ''}</button>`).join('')).join('')
-    + `<button class="pfp lx ${lxView ? 'on' : ''}" id="lxOpen" data-tip="${esc(lxName)} (Launcher-X projects)">${esc(lxName.split(/\s+/).map(w => /^\d/.test(w) ? w : w[0]).join('').slice(0, 3).toUpperCase())}</button>`
-    + '<div class="sep"></div>'
+    + (lxOn ? `<button class="pfp lx ${lxView ? 'on' : ''}" id="lxOpen" data-tip="${esc(lxName)} (recomps)">${esc(lxName.split(/\s+/).map(w => /^\d/.test(w) ? w : w[0]).join('').slice(0, 3).toUpperCase())}</button>` : '')
+    + (profiles.length || lxOn ? '<div class="sep"></div>' : '')
     + `<button class="pfp add" id="add" data-tip="New profile">${ic('plus')}</button>`
     + `<button class="pfp gear" id="settings" data-tip="${setupLeft ? 'Finish setup' : 'Settings'}">${ic('gear')}${setupLeft ? `<i class="rbadge">${setupLeft}</i>` : ''}</button>`
   $('#app').classList.toggle('empty', !cur && !lxView)
@@ -624,6 +624,10 @@ $('#newForm').onsubmit = async e => {
   const f = Object.fromEntries(new FormData(e.target)), btn = $('#createBtn'), name = f.name.trim()
   if (PICK_TYPES.includes(f.type) && !picked) return toast('Pick a game first', true)
   if (f.type === 'import' && !f.code.trim()) return toast('Paste a share code first', true)
+  if (f.type === 'recomp') return run(async () => {
+    const c = await api.lxSave({ enabled: true, name: name || 'GTA 6' })
+    lxOn = true; lxName = c.name; lxView = true; lxEdit = null; tab = 'lxprojects'; $('#newDlg').close(); render()
+  })
   btn.disabled = true; btn.textContent = f.type === 'import' ? 'Importing mods…' : 'Creating…'
   const into = f.type === 'import' && $('#impInto')?.value
   const res = await run(() => into ? api.sync(into, f.code, { remove: !!$('#impRemove')?.checked })
@@ -1474,7 +1478,7 @@ $('#collBody').onclick = async e => {
 
 // ---- Launcher-X built in: clone / update / build / run GitHub projects in a PowerShell console ----
 let lxEdit = null // project name being edited, '' for a new one
-api.lxConfig().then(c => { lxName = c.name; render() }).catch(() => {})
+api.lxConfig().then(c => { lxName = c.name; lxOn = c.enabled; render() }).catch(() => {})
 // GTA 6 page: sidebar tabs Projects / Settings, projects listed like mods.
 async function drawLx() {
   const c = await api.lxConfig(), e = lxEdit === null ? null : c.projects.find(p => p.name === lxEdit) || { name: '', repo: '', branch: 'main', build: [], shaders: [], run: '' }
@@ -1483,7 +1487,7 @@ async function drawLx() {
   lxName = c.name
   $('#banner').style.backgroundImage = ''; document.body.classList.remove('mc', 'mc-banner', 'mr') // the last profile's look; render() sets them again
   $('#pname').textContent = c.name
-  $('#pmeta').textContent = `Launcher-X · ${c.projects.length} project${c.projects.length === 1 ? '' : 's'}`
+  $('#pmeta').textContent = `Recomps · ${c.projects.length} project${c.projects.length === 1 ? '' : 's'}`
   $('#lxCount').textContent = c.projects.length || ''
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab))
   $('main').className = 'lx'
@@ -1496,7 +1500,9 @@ async function drawLx() {
     <label>PROJECTS FOLDER<div class="codebox"><input id="lxRoot" value="${esc(c.root)}"><button type="button" data-lx="pickRoot">${ic('folder')}</button></div></label>
     <label><span>GAME EXE <span class="muted">(used as {game} in run and shader commands)</span></span><div class="codebox"><input id="lxGame" value="${esc(c.game)}" placeholder="Pick the game .exe"><button type="button" data-lx="pickGame">${ic('file')}</button></div></label>
     <label class="check"><input type="checkbox" id="lxAuto" class="switch" ${c.autoUpdate ? 'checked' : ''}> Pull updates before Launch</label>
-    <p class="muted small">Projects are recomps: Launcher-X downloads them with git, builds them and runs them with your game. Each job opens its own PowerShell window.</p></form>`
+    <p class="muted small">Projects are recomps: they are downloaded with git, built and run with your game. Each job opens its own PowerShell window.</p>
+    <div class="row"><button type="button" class="danger" data-lx="hide">${ic('trash')} Remove from the sidebar</button></div>
+    <p class="muted small">Removing keeps your projects and downloaded files; add it again with + → Recomps.</p></form>`
     : `${warn}${c.game ? '' : `<div class="banner warn">${ic('alert')}<div><p>Pick the game exe in <button class="linkish" data-lx="toSettings">Settings</button> before Launch or Prepare shaders.</p></div></div>`}
     ${c.projects.map(p => `<div class="mod lxp" data-name="${esc(p.name)}"><div class="noicon lxicon">${initials(p.name)}</div>
       <div class="body"><div class="top"><b>${esc(p.name)}</b><span class="tag">${esc(p.branch)}</span><span class="tag lxst">Checking…</span>${p.shaders?.length ? '<span class="tag">Shader prep</span>' : ''}</div><p>${esc(p.repo)}</p></div>
@@ -1526,6 +1532,7 @@ $('#lxList').addEventListener('click', async e => {
   const b = e.target.closest('[data-lx]'); if (!b) return
   const a = b.dataset.lx, name = b.closest('.lxp')?.dataset.name
   if (a === 'toSettings') { tab = 'lxsettings'; return render() }
+  if (a === 'hide' && confirm(`Remove ${lxName} from the sidebar?`)) { await run(() => api.lxSave({ enabled: false })); lxOn = lxView = false; tab = 'browse'; return render() }
   if (a === 'pickRoot') { const d = await api.pickFolder(); if (d) await run(() => api.lxSave({ root: d })), drawLx() }
   if (a === 'pickGame') { const f = await api.openFile(['exe']); if (f) await run(() => api.lxSave({ game: f })), drawLx() }
   if (a === 'launch' || a === 'update' || a === 'rebuild' || a === 'shaders') {

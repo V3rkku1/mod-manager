@@ -175,7 +175,7 @@ menu button:not(.primary):hover { text-decoration: underline; background: none; 
 .seg label:hover { background: var(--hover); color: var(--text); }
 .seg input { display: none; }
 .seg label:has(:checked) { background: var(--accent); color: #fff; }
-form:has([value=modrinth]:checked) .pick, form:has([value=import]:checked) .pick, form:has([value=terraria]:checked) .pick, form:not(:has([value=terraria]:checked)) .terr, form:not(:has([value=modrinth]:checked)) .mc, form:not(:has([value=import]:checked)) .imp { display: none; }
+form:has([value=modrinth]:checked) .pick, form:has([value=import]:checked) .pick, form:has([value=terraria]:checked) .pick, form:has([value=recomp]:checked) .pick, form:not(:has([value=recomp]:checked)) .rc, form:not(:has([value=terraria]:checked)) .terr, form:not(:has([value=modrinth]:checked)) .mc, form:not(:has([value=import]:checked)) .imp { display: none; }
 #games { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; max-height: 300px; overflow-y: auto; margin-top: 10px; padding: 2px; }
 .game { display: grid; gap: 6px; padding: 0; background: none; text-align: center; font-size: 12px; color: var(--text); white-space: normal; }
 .game:hover { background: none; }
