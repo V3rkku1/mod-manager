@@ -9,7 +9,8 @@
     "dist": "electron-builder --win",
     "test:launcher": "node test-launcher.js",
     "test:server": "node test-server.js && node test-server-features.js && node test-server-types.js",
-    "test:sync": "node test-sync.js && node test-liveshare.js"
+    "test:sync": "node test-sync.js && node test-liveshare.js",
+    "test:features": "node test-features.js"
   },
   "build": {
     "appId": "dev.modmanager.app",

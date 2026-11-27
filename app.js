@@ -19,7 +19,7 @@ const toast = (msg, err, action) => {
   $('#toasts').append(t); setTimeout(() => t.remove(), err ? 8000 : action ? 7000 : 3500)
 }
 const run = async fn => {
-  try { return await fn() } catch (e) { toast(e.message.replace(/^Error invoking remote method '\w+': (Error: )?/, ''), true) }
+  try { return await fn() } catch (e) { const m = e.message.replace(/^Error invoking remote method '\w+': (Error: )?/, ''); m === 'Stopped' ? toast('Cancelled') : toast(m, true) }
 }
 const setProfile = p => { profiles = profiles.map(x => x.id === p.id ? p : x); if (cur?.id === p.id) cur = p }
 const defSrc = p => ({ modrinth: 'modrinth', terraria: 'workshop' })[p.type] || p.type
@@ -38,7 +38,8 @@ async function refresh(id) {
 
 const avatar = p => p.icon ? `<img src="${esc(p.icon)}" alt="">` : p.type === 'modrinth' ? ic('grass', '') : esc(p.name.slice(0, 2).toUpperCase())
 const hours = s => s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m` : `${Math.floor(s / 60)}m`
-const meta = p => (p.type === 'modrinth' ? `Minecraft ${p.mc.version} · ${p.mc.loader}` : `${p.gameName || p.game} · ${SRC[p.type]}`) + (p.playtime ? ` · ${hours(p.playtime)} played` : '')
+const ago = t => { const m = (Date.now() - t) / 60e3; return m < 60 ? 'just now' : m < 1440 ? `${Math.round(m / 60)}h ago` : m < 2 * 1440 ? 'yesterday' : `${Math.round(m / 1440)}d ago` }
+const meta = p => (p.type === 'modrinth' ? `Minecraft ${p.mc.version} · ${p.mc.loader}` : `${p.gameName || p.game} · ${SRC[p.type]}`) + (p.playtime ? ` · ${hours(p.playtime)} played` : '') + (p.lastPlayed ? ` · last ${ago(p.lastPlayed)}` : '')
 const TITLES = { browse: ['Browse', 'compass'], installed: ['Installed', 'package'], worlds: ['Worlds', 'globe'], logs: ['Logs', 'terminal'], server: ['Server', 'server'], options: ['Options', 'sliders'] }
 const SITE = 'https://v3rkku1.github.io/mod-manager/', LINK = SITE + 'join.html#'
 let selected = new Set()
@@ -168,14 +169,30 @@ async function loadFilters() {
 }
 
 function showInstalled() {
+  if (instFor !== cur.id) instFind = '', instShow = 'all', instFor = cur.id
   allOffLabel()
   selected = new Set([...selected].filter(id => cur.mods.some(m => m.id === id)))
   const bulk = selected.size ? `<div class="bulk"><b>${selected.size} selected</b><button data-bulk="update">${ic('up')} Update</button><button data-bulk="enable">${ic('check')} Enable</button>
     <button data-bulk="disable">${ic('x')} Disable</button><button data-bulk="remove" class="danger">${ic('trash')} Remove</button><button data-bulk="none" class="icon">Clear</button></div>` : ''
-  $('#list').innerHTML = '<div id="banners"></div>' + bulk + (cur.mods.map(row).join('')
+  const bar = cur.mods.length > 3 ? `<div class="ifilter"><div class="search">${ic('search')}<input id="ifind" type="search" placeholder="Filter ${cur.mods.length} mods" value="${esc(instFind)}" autocomplete="off"></div>
+    <select id="ishow">${[['all', 'All'], ['on', 'Enabled'], ['off', 'Disabled'], ['upd', 'Has update']].map(([v, l]) => `<option value="${v}" ${instShow === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''
+  $('#list').innerHTML = '<div id="banners"></div>' + bar + bulk + (cur.mods.map(row).join('')
     || `<div class="hint">${ic('package')}<b>No mods yet</b><span>Find some in Browse.</span></div>`)
+  filterInstalled()
   banners()
 }
+// Installed list filter: by name and enabled / disabled / has update. Kept while switching tabs.
+let instFind = '', instShow = 'all', instFor
+function filterInstalled() {
+  const q = instFind.toLowerCase(), upd = updates[cur.id] || {}
+  for (const el of document.querySelectorAll('#list .mod')) {
+    const m = cur.mods.find(x => x.id === el.dataset.id); if (!m) continue
+    el.hidden = !(m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
+      || (instShow === 'on' && m.disabled) || (instShow === 'off' && !m.disabled) || (instShow === 'upd' && !upd[m.id])
+  }
+}
+$('#list').addEventListener('input', e => { if (e.target.id === 'ifind') instFind = e.target.value, filterInstalled() })
+$('#list').addEventListener('change', e => { if (e.target.id === 'ishow') instShow = e.target.value, filterInstalled() })
 const diffText = d => [d.add.length && `+${d.add.length} new`, d.change.length && `${d.change.length} changed (${esc(d.change.slice(0, 3).join(', '))}${d.change.length > 3 ? '…' : ''})`,
   d.remove.length && `-${d.remove.length} removed (${esc(d.remove.slice(0, 3).join(', '))}${d.remove.length > 3 ? '…' : ''})`].filter(Boolean).join(' · ')
 // Conflicts + "friend updated the pack" banners above the installed list.
@@ -183,7 +200,9 @@ async function banners() {
   const id = cur.id, [c, f] = await Promise.all([api.conflicts(id).catch(() => []), cur.follow ? api.checkFollow(id).catch(() => null) : null])
   if (cur?.id !== id || tab !== 'installed') return
   const d = f?.diff, n = d ? d.add.length + d.change.length + d.remove.length : 0
-  $('#banners').innerHTML = (c.length ? `<div class="banner warn">${ic('alert')}<div><b>${c.length} conflict${c.length > 1 ? 's' : ''}</b>${c.slice(0, 4).map(x => `<p>${x.type === 'file' ? `${esc(x.mods.join(' + '))} both write <code>${esc(x.file)}</code> — <b>${esc(x.winner)}</b> wins ${x.ids.slice(0, -1).map((id, i) => `<button class="linkish" data-win="${esc(id)}" data-after="${esc(x.ids.at(-1))}">Use ${esc(x.mods[i])}</button>`).join(' ')}` : `${esc(x.mods.join(' and '))} are incompatible`}</p>`).join('')}<small class="muted">Lower in the list wins. Change order with these buttons, then Deploy.</small></div></div>` : '')
+  $('#banners').innerHTML = (c.length ? `<div class="banner warn">${ic('alert')}<div><b>${c.length} problem${c.length > 1 ? 's' : ''}</b>${c.slice(0, 4).map(x => `<p>${x.type === 'file' ? `${esc(x.mods.join(' + '))} both write <code>${esc(x.file)}</code> — <b>${esc(x.winner)}</b> wins ${x.ids.slice(0, -1).map((id, i) => `<button class="linkish" data-win="${esc(id)}" data-after="${esc(x.ids.at(-1))}">Use ${esc(x.mods[i])}</button>`).join(' ')}` : x.type === 'missing' ? `${esc(x.mods.join(', '))} need${x.mods.length > 1 ? '' : 's'} <b>${esc(x.depName)}</b> ${x.disabled ? `(switched off) <button class="linkish" data-depon="${esc(x.dep)}">Turn on</button>` : `<button class="linkish" data-depadd="${esc(x.dep)}">Install it</button>`}`
+      : x.type === 'duplicate' ? `${esc(x.files.join(' and '))} look like the same mod twice — switch one off`
+      : `${esc(x.mods.join(' and '))} are incompatible`}</p>`).join('')}${c.some(x => x.type === 'file') ? '<small class="muted">Lower in the list wins. Change order with these buttons, then Deploy.</small>' : ''}</div></div>` : '')
     + (n ? `<div class="banner${f.changed ? '' : ' warn'}">${ic('refresh')}<div><b>${f.changed ? `${esc(f.owner || 'Your friend')} updated this pack` : `You changed ${esc(f.owner || 'your friend')}'s pack`}</b>
       <p>${diffText(d)}</p>${f.changed ? '' : '<p>Only the owner can change the shared list. Sync puts it back, or unfollow to keep your changes.</p>'}</div>
       ${f.changed ? '' : '<button id="unfollow">Unfollow</button>'}<button class="primary" id="syncFollow">Sync now</button></div>` : '')
@@ -261,6 +280,8 @@ $('#list').onclick = async e => {
   const pg = e.target.closest('[data-page]'); if (pg) return page = +pg.dataset.page, search(true)
   const bk = e.target.closest('[data-bulk]')?.dataset.bulk
   if (bk) return bulkAction(bk)
+  const dp = e.target.closest('[data-depon], [data-depadd]')
+  if (dp) { dp.disabled = true; const p = await run(() => dp.dataset.depon ? api.setDisabled(cur.id, dp.dataset.depon, false) : api.install(cur.id, 'modrinth', dp.dataset.depadd)); if (p) setProfile(p.profile || p), showInstalled(); return }
   const w = e.target.closest('[data-win]'); if (w) { const p = await run(() => api.moveMod(cur.id, w.dataset.win, w.dataset.after)); if (p) setProfile(p), showInstalled(), toast('Order changed — Deploy to apply'); return }
   if (e.target.id === 'unfollow') return confirm('Stop following? The pack stays, with your changes, and no longer gets your friend\'s updates.') && run(async () => { setProfile(await api.unfollow(cur.id)); render(); toast('Unfollowed — this pack is yours now') })
   if (e.target.id === 'syncFollow') return run(async () => { e.target.disabled = true; const r = await api.sync(cur.id, `gist:${cur.follow.gist}`, { remove: true }); setProfile(r.profile); render(); toast(r.failed.length ? `Synced, ${r.failed.length} failed` : 'Synced with your friend', !!r.failed.length) })
@@ -398,24 +419,35 @@ $('#deploy').onclick = () => run(async () => { const p = await deploy(); toast(`
 $('#play').onclick = () => run(async () => {
   const id = cur.id
   if (cur.type !== 'modrinth') { await deploy(); await api.launch(id); return toast('Mods deployed — starting game') }
-  if (running.has(id)) return api.stop(id)
+  if (running.has(id) || status[id]) return api.stop(id)
+  await startGame(id)
+})
+// Starts Minecraft for profile `id`, optionally straight into a world or server ({ world } / { server }).
+async function startGame(id, quick = {}) {
+  const p = profiles.find(x => x.id === id)
   // Followed pack: offer the friend's latest mod list first, so everyone joins with the same mods.
-  const f = cur.follow && await api.checkFollow(id).catch(() => null)
+  const f = p.follow && await api.checkFollow(id).catch(() => null)
   if (f?.changed && confirm(`${f.owner || 'Your friend'} updated this pack (${diffText(f.diff).replace(/&#\d+;/g, '')}). Sync before playing?`)) {
     status[id] = 'Syncing…'; playButton()
-    try { const r = await api.sync(id, `gist:${cur.follow.gist}`, { remove: true }); setProfile(r.profile) } finally { delete status[id]; playButton() }
+    try { const r = await api.sync(id, `gist:${p.follow.gist}`, { remove: true }); setProfile(r.profile) } finally { delete status[id]; playButton() }
   }
-  // No Microsoft account linked: play through the launcher picked in Settings (official Minecraft Launcher by default).
-  if (!(await api.accounts()).length) {
-    status[id] = 'Preparing…'; playButton()
-    if (['prism', 'multimc'].includes((await api.getSettings()).launcher)) return api.playPrism(id).catch(e => { delete status[id]; playButton(); throw e })
-    try { const r = await api.playOfficial(id); toast(r.launched ? `Opened Minecraft Launcher — pick "${r.profile}" and press Play. This button turns to Stop once the game runs.` : `Added "${r.profile}" to the Minecraft Launcher`) }
-    finally { delete status[id]; playButton() }
-    return
+  // Missing required mods, incompatible pairs or a mod twice usually crash the game: ask first.
+  const bad = (await api.conflicts(id).catch(() => [])).filter(x => x.type !== 'file')
+  if (bad.length && !confirm(`This profile may crash:\n${bad.slice(0, 5).map(x => x.type === 'missing' ? `• ${x.mods.join(', ')} need ${x.depName}${x.disabled ? ' (switched off)' : ''}`
+    : x.type === 'duplicate' ? `• Same mod twice: ${x.files.join(' and ')}` : `• ${x.mods.join(' and ')} are incompatible`).join('\n')}\n\nFix it in Installed, or press OK to play anyway.`)) {
+    tab = 'installed'; return render()
   }
   status[id] = 'Preparing…'; playButton()
-  try { await api.play(id); running.add(id) } finally { if (!running.has(id)) delete status[id]; playButton() }
-})
+  try {
+    // No Microsoft account linked: play through the launcher picked in Settings (official Minecraft Launcher by default).
+    if (!(await api.accounts()).length) {
+      if (['prism', 'multimc'].includes((await api.getSettings()).launcher)) return await api.playPrism(id, quick)
+      const r = await api.playOfficial(id)
+      return toast(r.launched ? `Opened Minecraft Launcher — pick "${r.profile}" and press Play${quick.server ? `, then join ${quick.server} under Multiplayer` : ''}. This button turns to Stop once the game runs.` : `Added "${r.profile}" to the Minecraft Launcher`)
+    }
+    await api.play(id, quick); running.add(id)
+  } finally { if (!running.has(id)) delete status[id]; playButton() }
+}
 $('#del').onclick = () => confirm(`Delete profile "${cur.name}" and its downloaded mods?\nFiles already deployed stay in the target folder.`)
   && run(async () => { await api.deleteProfile(cur.id); cur = null; await refresh() })
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => b.closest('dialog').close())
@@ -536,6 +568,23 @@ async function openNew(mode = 'thunderstore') {
 $('#start').onclick = () => openNew()
 $('#startImport').onclick = () => openNew('import')
 
+// Starter mod sets (Modrinth slugs) for new Minecraft profiles; mods with no build for that version are skipped.
+const TEMPLATES = {
+  perf: { fabric: ['sodium', 'lithium', 'ferrite-core', 'entityculling', 'immediatelyfast', 'modernfix'], quilt: ['sodium', 'lithium', 'ferrite-core', 'entityculling', 'modernfix'],
+    forge: ['embeddium', 'ferrite-core', 'entityculling', 'modernfix'], neoforge: ['embeddium', 'ferrite-core', 'entityculling', 'modernfix'] },
+  plus: { all: ['appleskin', 'jade', 'mouse-tweaks', 'xaeros-minimap'], fabric: ['modmenu'], quilt: ['modmenu'] },
+}
+async function addTemplate(pid, t, loader) {
+  const slugs = [...(TEMPLATES.perf[loader] || []), ...(t === 'plus' ? [...TEMPLATES.plus.all, ...(TEMPLATES.plus[loader] || [])] : [])]
+  let ok = 0
+  for (const [i, s] of slugs.entries()) {
+    toast(`Adding starter mods ${i + 1}/${slugs.length}…`)
+    const p = await api.install(pid, 'modrinth', s).catch(() => null)
+    if (p) ok++, setProfile(p.profile || p)
+  }
+  if (cur?.id === pid) render()
+  toast(`Added ${ok} starter mods${ok < slugs.length ? ` (${slugs.length - ok} have no build for this version)` : ''}`)
+}
 async function created(res) {
   $('#newDlg').close(); tab = res.profile ? 'installed' : 'browse'; $('#q').value = ''
   if (res.failed?.length) toast(`Imported, but ${res.failed.length} failed: ${res.failed.join('; ')}`, true)
@@ -577,6 +626,7 @@ $('#newForm').onsubmit = async e => {
       icon: picked.icon || picked.cover, banner: picked.banner || picked.cover }))
   btn.disabled = false; btn.textContent = 'Create'
   if (res) created(res)
+  if (res && f.type === 'modrinth' && f.template && f.loader !== 'vanilla') addTemplate(res.id, f.template, f.loader)
 }
 
 // App self-update: main process downloads it, we offer a restart.
@@ -598,9 +648,12 @@ function playButton() {
   if (!b || !cur) return
   const st = status[id], isRun = running.has(id)
   b.classList.toggle('stop', isRun)
-  b.disabled = !!st && !isRun
-  b.title = isRun ? 'Stop the game (Ctrl+P)' : 'Deploy and start the game (Ctrl+P)'
-  b.innerHTML = isRun ? `${ic('stop')} Stop` : st ? `${ic('refresh', 'i spin')} <span id="pplay">${esc(st)}</span>` : `${ic('play')} Play`
+  // Preparing: progress fill + "Cancel" on hover/click; running: Stop.
+  const m = st?.match(/(\d+)\/(\d+)/), pct = m ? Math.round(m[1] / m[2] * 100) : null
+  b.disabled = false; b.classList.toggle('prep', !!st && !isRun)
+  b.style.setProperty('--pct', pct == null ? '0%' : pct + '%')
+  b.title = isRun ? 'Stop the game (Ctrl+P)' : st ? 'Cancel' : 'Deploy and start the game (Ctrl+P)'
+  b.innerHTML = isRun ? `${ic('stop')} Stop` : st ? `${ic('refresh', 'i spin')} <span id="pplay">${esc(st)}${pct == null ? '' : ` · ${pct}%`}</span><span class="cancel">${ic('x')} Cancel</span>` : `${ic('play')} Play`
 }
 window.onEvent?.((e, d) => {
   if (e === 'status') {
@@ -654,8 +707,9 @@ async function showWorlds() {
       ${x.icon ? `<img src="${x.icon}" alt="">` : '<div class="noicon"></div>'}<div><b>${esc(x.name)}</b><small>${new Date(x.modified).toLocaleDateString()}</small></div>
       <button data-world="${esc(x.name)}" title="Play this world">${ic('play')}</button></div>`).join('') || '<p class="muted">No worlds yet.</p>'}</div></div>
     <div class="section"><h4>SERVERS</h4><div class="wgrid">${w.servers.map(x => `<div class="world"><div class="noicon"></div><div><b>${esc(x.name)}</b><small>${esc(x.ip)}</small></div>
-      <button data-server="${esc(x.ip)}" title="Join">${ic('play')}</button></div>`).join('') || '<p class="muted">No servers saved.</p>'}</div>
-    <p class="muted small">Quick join needs Minecraft 1.20+ for worlds.</p></div>
+      <button data-server="${esc(x.ip)}" title="Join">${ic('play')}</button><button class="icon" data-rmserver="${esc(x.ip)}" title="Remove">${ic('trash')}</button></div>`).join('') || '<p class="muted">No servers saved.</p>'}</div>
+    <div class="row addsrv"><input name="sname" placeholder="Name (optional)" maxlength="40"><input name="sip" placeholder="Server address, e.g. play.example.com" maxlength="120"><button id="addServer">${ic('plus')} Add server</button></div>
+    <p class="muted small">Quick join needs Minecraft 1.20+ for worlds. With the official launcher, the game opens and you pick the server under Multiplayer.</p></div>
     <button id="savesdir">${ic('folder')} Open saves folder</button>`
 }
 
@@ -690,9 +744,15 @@ $('#list').addEventListener('click', async e => {
   const t = e.target.closest('button'); if (!t) return
   const id = cur.id
   if (t.dataset.world || t.dataset.server) {
-    if (running.has(id)) return toast('Already running', true)
-    status[id] = 'Preparing…'; playButton()
-    run(async () => { try { await api.play(id, t.dataset.world ? { world: t.dataset.world } : { server: t.dataset.server }); running.add(id) } finally { if (!running.has(id)) delete status[id]; playButton() } })
+    if (running.has(id) || status[id]) return toast('Already running', true)
+    return run(() => startGame(id, t.dataset.world ? { world: t.dataset.world } : { server: t.dataset.server }))
+  }
+  if (t.dataset.rmserver) { const w = await run(() => api.removeServer(id, t.dataset.rmserver)); if (w) showWorlds(); return }
+  if (t.id === 'addServer') {
+    const f = t.closest('.section'), name = f.querySelector('[name=sname]').value.trim(), ip = f.querySelector('[name=sip]').value.trim()
+    if (!ip) return toast('Type the server address', true)
+    if (await run(() => api.addServer(id, name || ip, ip))) showWorlds(), toast('Server saved — it also shows in Minecraft\'s Multiplayer list')
+    return
   }
   if (t.id === 'savesdir') api.openProfileFolder(id, 'saves')
   if (t.id === 'optRepair') { t.disabled = true; await run(() => api.repair(id)) && toast('Game files repaired'); t.disabled = false }
@@ -1161,7 +1221,7 @@ $('#list').addEventListener('click', async e => {
     if (!confirm('Upload the server log to mclo.gs (public link)? Logs can contain player names and IP addresses.')) return
     const url = await run(() => api.shareLog(id, 'server')); if (url) navigator.clipboard.writeText(url), toast(`Log link copied: ${url}`), api.openExternal(url); return
   }
-  if (t.dataset.joinhost) return run(async () => { status[id] = 'Preparing…'; playButton(); try { await api.play(id, { server: t.dataset.joinhost }); running.add(id) } finally { if (!running.has(id)) delete status[id]; playButton() } })
+  if (t.dataset.joinhost) return run(() => startGame(id, { server: t.dataset.joinhost }))
   if (t.id === 'syncPick') { const d = await api.pickFolder(); if (d && await run(() => api.setSyncDir(id, d))) toast('World sync folder set'); return showServer() }
   if (t.id === 'syncOff' && confirm('Stop syncing this server\'s world? Files in the shared folder stay.')) { await run(() => api.setSyncDir(id, null)); return showServer() }
   if (t.id === 'syncUp') { t.disabled = true; const v = await run(() => api.syncNow(id)); if (v) toast(`Uploaded world v${v}`); return showServer() }

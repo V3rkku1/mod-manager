@@ -359,8 +359,9 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     if (!validData(d)) throw new Error('Invalid share code')
     return { d, cfg, rev, owner }
   }
+  const addPlaytime = (pid, start) => serial(id => { const q = load(id); q.playtime = (q.playtime || 0) + Math.round((Date.now() - start) / 1000); q.lastPlayed = Date.now(); save(q) })(pid).catch(() => {})
   // Game started by the official launcher: spot it by its --gameDir (for 15 min after Play), then track it so Play shows Stop.
-  const watching = {}
+  const watching = {}, depNames = {}
   async function watchGame(pid, dir) {
     const token = watching[pid] = {}
     for (const end = Date.now() + 15 * 60e3; Date.now() < end && watching[pid] === token && !running[pid]; await new Promise(r => setTimeout(r, 4000))) {
@@ -368,8 +369,10 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       if (!gp || running[pid]) continue
       const me = running[pid] = { ext: gp, child: { kill: () => killTree(gp) } }
       emit('status', { pid, text: 'Running' })
+      const start = Date.now()
       while (running[pid] === me && await gamePid(dir) === gp) await new Promise(r => setTimeout(r, 4000))
       if (running[pid] === me) delete running[pid]
+      addPlaytime(pid, start)
       emit('status', { pid, text: null })
       break
     }
@@ -919,11 +922,25 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       return p.mods.filter(m => m.auto && !needed.has(m.id)).map(m => ({ id: m.id, name: m.name }))
     },
     // Same file written by two enabled mods, or Modrinth "incompatible" pairs.
-    conflicts: pid => {
+    conflicts: async pid => {
       const p = load(pid), on = p.mods.filter(m => !m.disabled), owner = {}, out = []
       for (const m of on) for (const f of m.files) (owner[f] ||= []).push(m)
       for (const [file, ms] of Object.entries(owner)) if (ms.length > 1 && !/\/config\//i.test(`/${file}`)) out.push({ type: 'file', file, mods: ms.map(m => m.name), ids: ms.map(m => m.id), winner: ms.at(-1).name })
       for (const m of on) for (const bad of m.incompat || []) { const o = on.find(x => x.id === bad); if (o) out.push({ type: 'incompatible', mods: [m.name, o.name] }) }
+      // Required mods that are missing or switched off (deps recorded at install).
+      const missing = [...new Set(on.flatMap(m => (m.deps || []).filter(d => !on.some(x => x.id === d))))]
+      const unknown = missing.filter(d => !depNames[d] && !p.mods.some(x => x.id === d) && ID.modrinth.test(d))
+      if (unknown.length) for (const x of await json(`${MR}/projects?ids=${q(JSON.stringify(unknown))}`).catch(() => [])) depNames[x.id] = x.title
+      for (const d of missing) {
+        const off = p.mods.find(x => x.id === d)
+        out.push({ type: 'missing', dep: d, depName: off?.name || depNames[d] || d, disabled: !!off, mods: on.filter(m => m.deps?.includes(d)).map(m => m.name) })
+      }
+      // Same mod twice (e.g. a modpack's copy and a separately installed one): jar names equal once the version is cut off.
+      const key = f => path.basename(f).toLowerCase().replace(/\.jar$/, '').split(/[-_+ ]/).filter((t, i, a) => !a.slice(0, i + 1).some(x => /^(v?\d|mc\d)/.test(x))).join('-')
+      const jars = {}
+      for (const m of on) for (const f of m.files) if (/^mods\/[^/]+\.jar$/i.test(f) && key(f)) (jars[key(f)] ||= []).push({ m, f })
+      for (const list of Object.values(jars)) if (list.length > 1 && new Set(list.map(x => x.f)).size > 1)
+        out.push({ type: 'duplicate', mods: list.map(x => x.m.name), ids: list.map(x => x.m.id), files: list.map(x => path.basename(x.f)) })
       return out
     },
 
@@ -1195,13 +1212,23 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
 
     // Play without the app's own Microsoft login: hand the instance to the official Minecraft Launcher.
     // Copies the prepared version (loader) + its libraries into .minecraft and adds a launcher profile pointing at this instance.
+    // Saved servers (servers.dat in the game folder, so Minecraft's Multiplayer list shows them too).
+    addServer: (pid, name, ip) => {
+      if (!/^[\w.-]+(:\d{1,5})?$/.test(ip)) throw new Error('That is not a server address')
+      const p = load(pid), f = path.join(p.target, 'servers.dat')
+      fs.mkdirSync(p.target, { recursive: true }); MC.writeServers(f, [...MC.readServers(f).filter(s => s.ip !== ip), { name: String(name).slice(0, 40), ip }])
+      return true
+    },
+    removeServer: (pid, ip) => { const f = path.join(load(pid).target, 'servers.dat'); MC.writeServers(f, MC.readServers(f).filter(s => s.ip !== ip)); return true },
     playOfficial: async pid => {
       let p = load(pid)
       if (p.type !== 'modrinth') throw new Error('Only Minecraft profiles')
-      const status = text => emit('status', { pid, text })
+      if (running[pid]) throw new Error('Already running')
+      const status = text => emit('status', { pid, text }), me = running[pid] = { preparing: true }
       status('Preparing…')
       try {
-        const plan = await mcl.prepare({ mc: p.mc.version, loader: p.mc.loader, loaderVersion: p.mc.loaderVersion, progress: status })
+        const plan = await mcl.prepare({ mc: p.mc.version, loader: p.mc.loader, loaderVersion: p.mc.loaderVersion, progress: status, cancelled: () => me.stopped })
+        if (me.stopped) throw new Error('Stopped')
         p = await serialDeploy(pid)
         if (plan.loaderVersion && plan.loaderVersion !== p.mc.loaderVersion) p = save({ ...p, mc: { ...p.mc, loaderVersion: plan.loaderVersion } })
         const mcd = minecraftDir(), base = path.join(root, '..', 'minecraft')
@@ -1228,9 +1255,9 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
           exe ? run(exe, []) : run('explorer.exe', ['shell:AppsFolder\\Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft'])
           launched = true
         }
-        watchGame(pid, p.target) // also catches a game started from the launcher by hand
+        setImmediate(() => watchGame(pid, p.target)) // after `running` is released; also catches a game started from the launcher by hand
         return { profile: p.name, version: plan.id, launched }
-      } finally { emit('status', { pid, text: null }) }
+      } finally { if (running[pid] === me) delete running[pid]; emit('status', { pid, text: null }) }
     },
     // Setup checklist: what still needs doing for every feature to work.
     setupStatus: async () => {
@@ -1300,7 +1327,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     // Play through Prism Launcher or MultiMC (settings.launcher) with no launcher window: it does the Microsoft login, Java and game files.
     // The instance's game folder is a link to this profile's folder, so mods, worlds and configs stay shared.
     watchGame: pid => watchGame(pid, load(pid).target),
-    playPrism: async pid => {
+    playPrism: async (pid, quick = {}) => {
       const s = settings(), pr = findLauncher(s.launcher, s.prismPath)
       if (!pr) throw new Error(`${s.launcher === 'multimc' ? 'MultiMC' : 'Prism Launcher'} not found. Set its path in Settings → Accounts.`)
       if (running[pid]) throw new Error('Already running')
@@ -1324,11 +1351,12 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         writeAtomic(path.join(inst, 'instance.cfg'), ['[General]', 'ConfigVersion=1.2', 'InstanceType=OneSix', `name=${p.name.replace(/[\r\n]/g, ' ')}`, 'iconKey=default',
           'OverrideConsole=true', 'ShowConsole=false', 'AutoCloseConsole=true', 'ShowConsoleOnError=true', 'OverrideMemory=true', `MaxMemAlloc=${+mem || 4096}`, ''].join('\n'))
         if (me.stopped) throw new Error('Stopped')
-        const child = me.child = spawn(pr.exe, [...pr.args, '--launch', id], { stdio: 'ignore', detached: process.platform !== 'win32' }) // own process group so Stop ends the game too
+        const child = me.child = spawn(pr.exe, [...pr.args, '--launch', id, ...(quick.server ? ['--server', quick.server] : quick.world ? ['--world', quick.world] : [])], { stdio: 'ignore', detached: process.platform !== 'win32' }) // own process group so Stop ends the game too
         delete me.preparing
         emit('status', { pid, text: 'Running' })
         child.on('error', () => {})
-        child.on('exit', code => { if (running[pid] === me) delete running[pid]; emit('status', { pid, text: null, exit: me.stopped ? 0 : code }) })
+        const start = Date.now()
+        child.on('exit', code => { if (running[pid] === me) delete running[pid]; addPlaytime(pid, start); emit('status', { pid, text: null, exit: me.stopped ? 0 : code }) })
         return { prism: pr.exe }
       } catch (e) { if (running[pid] === me) delete running[pid]; emit('status', { pid, text: null }); throw e }
     },
@@ -1345,7 +1373,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       const log = line => { (logs[pid] ||= []).push(line); if (logs[pid].length > 5000) logs[pid].shift(); emit('log', { pid, line }) }
       logs[pid] = []
       status('Preparing…')
-      const plan = await mcl.prepare({ mc: p.mc.version, loader: p.mc.loader, loaderVersion: p.mc.loaderVersion, log, progress: status })
+      const plan = await mcl.prepare({ mc: p.mc.version, loader: p.mc.loader, loaderVersion: p.mc.loaderVersion, log, progress: status, cancelled: () => me.stopped })
       if (me.stopped) throw new Error('Stopped')
       p = await serialDeploy(pid, { vanilla })
       if (plan.loaderVersion && plan.loaderVersion !== p.mc.loaderVersion) p.mc.loaderVersion = plan.loaderVersion, save(p)
@@ -1355,7 +1383,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         onExit: code => {
           const stopped = running[pid]?.stopped
           delete running[pid]
-          const q = load(pid); q.playtime = (q.playtime || 0) + Math.round((Date.now() - start) / 1000); q.lastPlayed = Date.now(); save(q)
+          addPlaytime(pid, start)
           emit('status', { pid, text: null, exit: stopped ? 0 : code })
         } })
       me.child = child; me.preparing = false

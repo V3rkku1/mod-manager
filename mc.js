@@ -77,6 +77,8 @@ module.exports = base => {
       const meta = loader === 'fabric' ? 'https://meta.fabricmc.net/v2' : 'https://meta.quiltmc.org/v3'
       const lv = loaderVersion || await latestLoader(mc, loader)
       if (!lv) throw new Error(`${loader} has no loader for ${mc}`)
+      const cached = `${loader}-loader-${lv}-${mc}`
+      if (fs.existsSync(verJson(cached))) return { id: cached, loaderVersion: lv } // repeat launch: no network
       const profile = await json(`${meta}/versions/loader/${mc}/${lv}/profile/json`)
       fs.mkdirSync(path.dirname(verJson(profile.id)), { recursive: true })
       fs.writeFileSync(verJson(profile.id), JSON.stringify(profile))
@@ -122,7 +124,7 @@ module.exports = base => {
   }
 
   // Mojang-provided Java for this version; returns the java executable.
-  async function runtime(javaVersion, force, progress) {
+  async function runtime(javaVersion, force, progress, cancelled) {
     const component = javaVersion?.component || 'jre-legacy'
     const dir = path.join(dirs.rt, component), exe = path.join(dir, 'bin', process.platform === 'win32' ? 'javaw.exe' : 'java')
     if (fs.existsSync(exe) && !force) return exe
@@ -131,6 +133,7 @@ module.exports = base => {
     const files = Object.entries((await json(entry.manifest.url)).files).filter(([, f]) => f.type === 'file')
     let done = 0
     await pool(files, 16, async ([rel, f]) => {
+      if (cancelled?.()) throw new Error('Stopped')
       const file = path.join(dir, rel)
       await download(f.downloads.raw.url, file, f.downloads.raw.sha1, force, f.downloads.raw.size)
       if (f.executable && process.platform !== 'win32') fs.chmodSync(file, 0o755)
@@ -140,10 +143,10 @@ module.exports = base => {
   }
 
   // Downloads everything for a version; returns the launch plan.
-  async function prepare({ mc, loader, loaderVersion, force, log, progress }) {
+  async function prepare({ mc, loader, loaderVersion, force, log, progress, cancelled }) {
     const inst = await installLoader(mc, loader, loaderVersion, log)
     const v = await resolve(inst.id)
-    const java = await runtime(v.javaVersion, force, progress)
+    const java = await runtime(v.javaVersion, force, progress, cancelled)
     const libs = v.libraries.filter(l => allowed(l.rules))
     const nativesDir = path.join(base, 'natives', inst.id)
     const jobs = [], classpath = [], natives = []
@@ -161,13 +164,19 @@ module.exports = base => {
     }
     const vanillaJar = path.join(dirs.ver, v.jar || v.id, `${v.jar || v.id}.jar`)
     jobs.push([v.downloads.client.url, vanillaJar, v.downloads.client.sha1, v.downloads.client.size])
-    const index = await json(v.assetIndex.url)
-    fs.mkdirSync(path.join(dirs.assets, 'indexes'), { recursive: true })
-    fs.writeFileSync(path.join(dirs.assets, 'indexes', `${v.assetIndex.id}.json`), JSON.stringify(index))
+    const idxFile = path.join(dirs.assets, 'indexes', `${v.assetIndex.id}.json`)
+    let index; try { if (!force) index = JSON.parse(fs.readFileSync(idxFile, 'utf8')) } catch {}
+    if (!index?.objects) {
+      index = await json(v.assetIndex.url)
+      fs.mkdirSync(path.dirname(idxFile), { recursive: true }); fs.writeFileSync(idxFile, JSON.stringify(index))
+    }
     for (const { hash, size } of Object.values(index.objects))
       jobs.push([`https://resources.download.minecraft.net/${hash.slice(0, 2)}/${hash}`, path.join(dirs.assets, 'objects', hash.slice(0, 2), hash), hash, size])
     let done = 0
-    await pool(jobs.filter(j => j[0]), 24, async ([url, file, hash, size]) => { await download(url, file, hash, force, size); if (++done % 50 === 0) progress?.(`Game files ${done}/${jobs.length}`) })
+    await pool(jobs.filter(j => j[0]), 24, async ([url, file, hash, size]) => {
+      if (cancelled?.()) throw new Error('Stopped')
+      await download(url, file, hash, force, size); if (++done % 50 === 0) progress?.(`Game files ${done}/${jobs.length}`)
+    })
     // Forge expects versions/<id>/<id>.jar to be the client jar.
     const jar = path.join(dirs.ver, inst.id, `${inst.id}.jar`)
     if (!fs.existsSync(jar)) fs.copyFileSync(vanillaJar, jar)
