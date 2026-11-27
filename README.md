@@ -76,6 +76,7 @@ Settings (gear, or Ctrl+,) has sections: Appearance, Accounts, Minecraft, Mod si
 
 - **Invite link**: Share > Invite link. Friends click it in Discord and the app imports the profile. (Needs GitHub Pages on this repo: Settings > Pages > deploy from branch, folder `/docs`.)
 - **Live share**: Share > Publish (needs a GitHub token with `gist` scope in Settings). Friends who open the link follow your profile and see "Your friend updated this pack > Sync now" whenever you press Update.
+- **Pack website**: https://v3rkku1.github.io/mod-manager/ lets anyone look up a GitHub username, see their published packs and mods, install with one click, and keep a friends list (saved in the browser). Browsing needs no account; only publishing needs a GitHub token.
 - **Import preview**: pasting a code shows the pack and lets you sync it into an existing profile, with a list of new / changed / extra mods.
 
 ## Minecraft server

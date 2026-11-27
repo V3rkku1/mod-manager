@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mod Manager Packs</title>
+<!-- No framework, no backend: GitHub public gists are the database, friends live in this browser's localStorage. -->
+<style>
+  :root { color-scheme: dark; --bg: #313338; --card: #2b2d31; --line: #3f4147; --text: #dbdee1; --head: #f2f3f5; --muted: #949ba4; --accent: #5865f2; --ok: #23a55a; }
+  @media (prefers-color-scheme: light) { :root { color-scheme: light; --bg: #f2f3f5; --card: #fff; --line: #e3e5e8; --text: #313338; --head: #060607; --muted: #5c5e66; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
+  header { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  header a.home { color: var(--head); font-weight: 700; text-decoration: none; margin-right: auto; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 16px; }
+  h1, h2 { color: var(--head); margin: 0; }
+  h1 { font-size: 24px; } h2 { font-size: 18px; }
+  p { margin: 0; } .muted { color: var(--muted); } .small { font-size: 13px; }
+  a { color: var(--accent); }
+  .btn { display: inline-block; padding: 9px 14px; border-radius: 6px; border: 0; background: #4e5058; color: #fff; font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
+  .btn.primary { background: var(--accent); } .btn.ok { background: var(--ok); }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; min-width: 0; padding: 9px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit; }
+  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .card { display: flex; gap: 12px; align-items: center; padding: 12px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); color: inherit; text-decoration: none; min-width: 0; }
+  a.card:hover { border-color: var(--accent); }
+  .card img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex: none; background: var(--line); }
+  .card div { min-width: 0; } .card b { display: block; color: var(--head); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .who { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .who img { width: 72px; height: 72px; border-radius: 50%; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .box { padding: 14px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); display: grid; gap: 8px; }
+</style>
+</head>
+<body>
+<header><a class="home" href="#">Mod Manager</a><a class="btn primary" href="https://github.com/V3rkku1/mod-manager/releases/latest">Download app</a></header>
+<main id="app"><p class="muted">Loading…</p></main>
+<script>
+const app = document.getElementById('app'), APP = 'https://github.com/V3rkku1/mod-manager/releases/latest'
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`)
+const safeUrl = u => /^https:\/\//.test(u || '') ? u : ''
+const USER = /^[A-Za-z0-9-]{1,39}$/, GIST = /^\w{1,64}$/
+const friends = { get: () => { try { return JSON.parse(localStorage.friends || '[]') } catch { return [] } },
+  set: l => { try { localStorage.friends = JSON.stringify(l) } catch {} } }
+async function gh(path) {
+  const r = await fetch('https://api.github.com/' + path, { headers: { accept: 'application/vnd.github+json' } })
+  if (r.status === 404) throw new Error('Not found')
+  if (r.status === 403 || r.status === 429) throw new Error('GitHub is limiting requests from your network. Try again in a few minutes.')
+  if (!r.ok) throw new Error('GitHub error ' + r.status)
+  return r.json()
+}
+const packsOf = async user => (await gh(`users/${user}/gists?per_page=100`)).filter(g => g.files['modmanager.json'])
+const gameOf = d => d.gn || (d.mc ? `Minecraft ${d.mc.version || ''} ${d.mc.loader || ''}` : d.g || d.t)
+
+function home() {
+  const list = friends.get()
+  app.innerHTML = `<h1>Share mod packs with friends</h1>
+    <p class="muted">Browse anyone's packs and install them in one click. No account needed. To publish your own packs, link a free GitHub account in the app (Settings → Mod sites), then press Share → Publish.</p>
+    <form id="find"><input name="u" placeholder="Friend's GitHub username" autocomplete="off" required><button class="btn primary">Find</button></form>
+    <h2>Your friends</h2>
+    ${list.length ? `<div class="grid">${list.map(u => `<a class="card" href="#u/${esc(u)}"><img src="https://github.com/${esc(u)}.png?size=88" alt=""><div><b>${esc(u)}</b><span class="muted small">View packs</span></div></a>`).join('')}</div>`
+      : '<p class="muted">No friends yet. Find someone by GitHub username and press Add friend. Your list is saved in this browser.</p>'}`
+  app.querySelector('#find').onsubmit = e => { e.preventDefault(); const u = e.target.u.value.trim(); if (USER.test(u)) location.hash = 'u/' + u; else alert('That is not a valid GitHub username.') }
+}
+
+async function user(u) {
+  const isFriend = () => friends.get().includes(u)
+  app.innerHTML = `<div class="who"><img src="https://github.com/${esc(u)}.png?size=144" alt=""><div><h1>${esc(u)}</h1><p class="muted small">Mod packs shared from Mod Manager</p></div>
+    <button class="btn" id="fr"></button></div><div id="packs"><p class="muted">Loading packs…</p></div>`
+  const fr = app.querySelector('#fr'), paint = () => { fr.textContent = isFriend() ? 'Remove friend' : 'Add friend'; fr.className = 'btn ' + (isFriend() ? '' : 'ok') }
+  fr.onclick = () => { friends.set(isFriend() ? friends.get().filter(x => x !== u) : [...friends.get(), u]); paint() }; paint()
+  const box = app.querySelector('#packs')
+  try {
+    const packs = await packsOf(u)
+    box.innerHTML = packs.length ? `<div class="grid">${packs.map(g => `<a class="card" href="#pack/${esc(g.id)}"><div><b>${esc(g.description.replace(/^Mod Manager: /, '') || 'Mod pack')}</b><span class="muted small">Updated ${esc(new Date(g.updated_at).toLocaleDateString())}</span></div></a>`).join('')}</div>`
+      : '<p class="muted">No public packs yet.</p>'
+  } catch (e) { box.innerHTML = `<p class="muted">${esc(e.message)}</p>` }
+}
+
+async function pack(id) {
+  app.innerHTML = '<p class="muted">Loading pack…</p>'
+  try {
+    const g = await gh('gists/' + id), f = g.files['modmanager.json']
+    if (!f) throw new Error('This is not a Mod Manager pack.')
+    const d = JSON.parse(f.truncated ? await (await fetch(f.raw_url)).text() : f.content), mods = Array.isArray(d.m) ? d.m : []
+    const owner = g.owner?.login || ''
+    app.innerHTML = `<div class="who">${safeUrl(d.i) ? `<img src="${esc(d.i)}" alt="" style="border-radius:12px">` : ''}<div><h1>${esc(d.n || 'Mod pack')}</h1>
+      <p class="muted">${esc(gameOf(d))} · ${mods.length} mods${USER.test(owner) ? ` · by <a href="#u/${esc(owner)}">${esc(owner)}</a>` : ''}</p></div></div>
+      <div class="box"><div class="row"><a class="btn primary" href="join.html#follow/${esc(id)}">Install in Mod Manager</a><a class="btn" href="${APP}">Get the app</a></div>
+      <p class="muted small">Installing follows this pack: when ${esc(owner || 'the owner')} updates it, the app shows a Sync button.</p></div>
+      <h2>Mods</h2><div class="grid" id="mods">${mods.map(([mid, , src]) => `<div class="card" data-id="${esc(mid)}"><img alt="" src=""><div><b>${esc(mid)}</b><span class="muted small">${esc(src || d.t)}</span></div></div>`).join('')}</div>`
+    // Modrinth ids -> names and icons in one call; other sources keep their id.
+    const ids = d.t === 'modrinth' ? mods.filter(([, , s]) => !s || s === 'modrinth').map(([m]) => m) : []
+    if (ids.length) {
+      const r = await fetch('https://api.modrinth.com/v2/projects?ids=' + encodeURIComponent(JSON.stringify(ids))).then(r => r.ok ? r.json() : [])
+      for (const p of r) for (const c of app.querySelectorAll('#mods .card')) if (c.dataset.id === p.id || c.dataset.id === p.slug) {
+        const a = document.createElement('a'); a.className = 'card'; a.href = `https://modrinth.com/${encodeURIComponent(p.project_type)}/${encodeURIComponent(p.slug)}`
+        a.innerHTML = `<img alt="" src="${esc(safeUrl(p.icon_url))}"><div><b>${esc(p.title)}</b><span class="muted small">${esc(p.description)}</span></div>`; c.replaceWith(a)
+      }
+    }
+    app.querySelectorAll('img[src=""]').forEach(i => i.style.visibility = 'hidden')
+  } catch (e) { app.innerHTML = `<p class="muted">${esc(e.message)}</p>` }
+}
+
+function route() {
+  const [, kind, v] = location.hash.match(/^#(u|pack)\/(.+)$/) || []
+  if (kind === 'u' && USER.test(v)) user(v); else if (kind === 'pack' && GIST.test(v)) pack(v); else home()
+  scrollTo(0, 0)
+}
+addEventListener('hashchange', route); route()
+</script>
+</body>
+</html>

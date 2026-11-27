@@ -844,17 +844,17 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       return r
     },
 
-    // Live share via a secret GitHub Gist: the publisher needs a token with "gist" scope; friends only read.
+    // Live share via a public GitHub Gist (listed on the publisher's site profile): needs a token with "gist" scope; friends only read.
     publish: async pid => {
       const p = load(pid), token = settings().githubToken
       if (!token) throw new Error('Add a GitHub token (gist scope) in Settings to live-share')
-      const body = JSON.stringify({ description: `Mod Manager: ${p.name}`, public: false, files: { 'modmanager.json': { content: JSON.stringify(shareData(p)) } } })
+      const body = JSON.stringify({ description: `Mod Manager: ${p.name}`, public: true, files: { 'modmanager.json': { content: JSON.stringify(shareData(p)) } } })
       const headers = { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' }
       const r = p.publish
         ? await json(`https://api.github.com/gists/${q(p.publish)}`, headers, { method: 'PATCH', body }).catch(e => e.status === 404 ? null : Promise.reject(e))
         : null
       const g = r || await json('https://api.github.com/gists', headers, { method: 'POST', body })
-      return save({ ...p, publish: g.id }).publish
+      return save({ ...p, publish: g.id, publishUser: g.owner?.login || p.publishUser })
     },
     follow: async (gist, name) => {
       const { d, rev } = await parseShare(`gist:${gist}`)

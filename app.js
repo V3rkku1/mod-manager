@@ -40,7 +40,7 @@ const avatar = p => p.icon ? `<img src="${esc(p.icon)}" alt="">` : p.type === 'm
 const hours = s => s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m` : `${Math.floor(s / 60)}m`
 const meta = p => (p.type === 'modrinth' ? `Minecraft ${p.mc.version} · ${p.mc.loader}` : `${p.gameName || p.game} · ${SRC[p.type]}`) + (p.playtime ? ` · ${hours(p.playtime)} played` : '')
 const TITLES = { browse: ['Browse', 'compass'], installed: ['Installed', 'package'], worlds: ['Worlds', 'globe'], logs: ['Logs', 'terminal'], server: ['Server', 'server'], options: ['Options', 'sliders'] }
-const LINK = 'https://v3rkku1.github.io/mod-manager/join.html#'
+const SITE = 'https://v3rkku1.github.io/mod-manager/', LINK = SITE + 'join.html#'
 let selected = new Set()
 let setupLeft = 0, running = new Set(), status = {}, filterCache = {}, chips = new Set(), pages = 1, remembering = true
 
@@ -411,7 +411,7 @@ $('#share').onclick = () => run(async () => {
   $('#code').value = await api.exportCode(cur.id)
   $('#invite').value = LINK + 'import/' + $('#code').value
   $('#live').value = cur.publish ? LINK + 'follow/' + cur.publish : ''
-  $('#makeLive').lastChild.textContent = cur.publish ? ' Update' : ' Publish'; $('[data-copy=live]').hidden = !cur.publish
+  $('#makeLive').lastChild.textContent = cur.publish ? ' Update' : ' Publish'; $('[data-copy=live]').hidden = !cur.publish; profileLink()
   $('#r2code').value = ''; $('[data-copy=r2code]').hidden = true; $('#makeR2').hidden = false
   $('.tsOnly').hidden = cur.type !== 'thunderstore'
   $('#shareDlg').showModal(); $('#code').select()
@@ -422,11 +422,12 @@ $('#shareDlg').addEventListener('click', e => {
 })
 $('#makeLive').onclick = async () => {
   const b = $('#makeLive'); b.disabled = true
-  const gid = await run(() => api.publish(cur.id)); b.disabled = false
-  if (!gid) return
-  cur.publish = gid; $('#live').value = LINK + 'follow/' + gid; $('[data-copy=live]').hidden = false; b.lastChild.textContent = ' Update'
+  const np = await run(() => api.publish(cur.id)); b.disabled = false
+  if (!np) return
+  setProfile(np); $('#live').value = LINK + 'follow/' + cur.publish; $('[data-copy=live]').hidden = false; b.lastChild.textContent = ' Update'; profileLink()
   toast('Live share updated — friends see a Sync button')
 }
+const profileLink = () => { const a = $('#myPage'); a.hidden = !cur.publishUser; a.dataset.href = SITE + '#u/' + cur.publishUser }
 $('#makeR2').onclick = async () => {
   const b = $('#makeR2'); b.disabled = true
   const key = await run(() => api.exportR2(cur.id)); b.disabled = false
