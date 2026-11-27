@@ -43,15 +43,16 @@ const meta = p => (p.type === 'modrinth' ? `Minecraft ${p.mc.version} · ${p.mc.
 const TITLES = { browse: ['Browse', 'compass'], installed: ['Installed', 'package'], worlds: ['Worlds', 'globe'], logs: ['Logs', 'terminal'], server: ['Server', 'server'], options: ['Options', 'sliders'] }
 const SITE = 'https://v3rkku1.github.io/mod-manager/', LINK = SITE + 'join.html#'
 let selected = new Set()
+let lxName = 'GTA 6' // the Launcher-X instance's name in the left bar
 let setupLeft = 0, running = new Set(), status = {}, filterCache = {}, chips = new Set(), pages = 1, remembering = true
 
 function render() {
   const groups = [...new Set(profiles.map(p => p.group || ''))].sort()
   $('#rail').innerHTML = groups.map(g => (g ? `<div class="sep"></div><div class="rail-group" title="${esc(g)}">${esc(g)}</div>` : '')
     + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''} ${running.has(p.id) ? 'playing' : ''}" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}${Object.keys(updates[p.id] || {}).length ? `<i class="rbadge">${Object.keys(updates[p.id]).length}</i>` : ''}</button>`).join('')).join('')
-    + (profiles.length ? '<div class="sep"></div>' : '')
+    + `<button class="pfp lx" id="lxOpen" data-tip="${esc(lxName)} (Launcher-X projects)">${esc(lxName.split(/\s+/).map(w => /^\d/.test(w) ? w : w[0]).join('').slice(0, 3).toUpperCase())}</button>`
+    + '<div class="sep"></div>'
     + `<button class="pfp add" id="add" data-tip="New profile">${ic('plus')}</button>`
-    + `<button class="pfp lx" id="lxOpen" data-tip="Launcher-X (build + run projects)">${ic('terminal')}</button>`
     + `<button class="pfp gear" id="settings" data-tip="${setupLeft ? 'Finish setup' : 'Settings'}">${ic('gear')}${setupLeft ? `<i class="rbadge">${setupLeft}</i>` : ''}</button>`
   $('#app').classList.toggle('empty', !cur)
   if (!cur) return
@@ -1447,10 +1448,12 @@ $('#collBody').onclick = async e => {
 
 // ---- Launcher-X built in: clone / update / build / run GitHub projects in a PowerShell console ----
 let lxEdit = null // project name being edited, '' for a new one
+api.lxConfig().then(c => { lxName = c.name; render() }).catch(() => {})
 async function openLx() { await drawLx(); if (!$('#lxDlg').open) $('#lxDlg').showModal() }
 async function drawLx() {
   const c = await api.lxConfig(), e = lxEdit === null ? null : c.projects.find(p => p.name === lxEdit) || { name: '', repo: '', branch: 'main', build: [], run: '' }
-  $('#lxBody').innerHTML = `${window.platform === 'win32' ? '' : '<div class="banner warn">' + ic('alert') + '<div><p>Projects build and run on Windows. You can still edit the list here.</p></div></div>'}
+  lxName = c.name; $('#lxTitle').textContent = c.name
+  $('#lxBody').innerHTML = `<label>INSTANCE NAME<input id="lxName" value="${esc(c.name)}" maxlength="40"></label>${window.platform === 'win32' ? '' : '<div class="banner warn">' + ic('alert') + '<div><p>Projects build and run on Windows. You can still edit the list here.</p></div></div>'}
     <div class="row"><label>PROJECTS FOLDER<div class="codebox"><input id="lxRoot" value="${esc(c.root)}"><button type="button" data-lx="pickRoot">${ic('folder')}</button></div></label></div>
     <div class="row"><label><span>GAME EXE <span class="muted">(used as {game} in run commands)</span></span><div class="codebox"><input id="lxGame" value="${esc(c.game)}" placeholder="Pick the game .exe"><button type="button" data-lx="pickGame">${ic('file')}</button></div></label></div>
     <label class="check"><input type="checkbox" id="lxAuto" class="switch" ${c.autoUpdate ? 'checked' : ''}> Pull updates before Launch</label>
@@ -1469,6 +1472,7 @@ async function drawLx() {
   for (const el of document.querySelectorAll('#lxBody .lxp')) api.lxStatus(el.dataset.name).then(t => { el.querySelector('.lxst').textContent = t }, () => {})
 }
 $('#lxDlg').addEventListener('change', e => {
+  if (e.target.id === 'lxName') return run(() => api.lxSave({ name: e.target.value })).then(c => c && (lxName = c.name, $('#lxTitle').textContent = c.name, render()))
   const patch = e.target.id === 'lxRoot' ? { root: e.target.value.trim() } : e.target.id === 'lxGame' ? { game: e.target.value.trim() } : e.target.id === 'lxAuto' ? { autoUpdate: e.target.checked } : null
   if (patch) run(() => api.lxSave(patch)).then(() => patch.root && drawLx())
 })
