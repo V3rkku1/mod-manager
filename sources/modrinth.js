@@ -33,7 +33,7 @@ module.exports = ({ files, settings }) => {
     }
     const mc = index.dependencies.minecraft, loader = Object.entries(index.dependencies).find(([k]) => k !== 'minecraft')
     return {
-      mod: { ...meta, name: meta.name || index.name, files: [...new Set(out)], pack: true },
+      mod: { ...meta, name: meta.name || index.name, files: [...new Set(out)], pack: true, clientOnly: todo.filter(f => f.env?.server === 'unsupported').map(f => f.path) },
       deps: [],
       warn: `Modpack needs Minecraft ${mc}${loader ? ` with ${loader[0]} ${loader[1]}` : ''} in your launcher`,
     }

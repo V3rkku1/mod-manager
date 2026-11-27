@@ -5,7 +5,8 @@ const names = ['listProfiles', 'createProfile', 'updateProfile', 'deleteProfile'
   'accounts', 'loginStart', 'loginFinish', 'setActiveAccount', 'removeAccount', 'running', 'getLog', 'stop', 'play', 'repair',
   'worlds', 'logFiles', 'readLog', 'addLocal', 'exportMrpack', 'importInstance', 'duplicate', 'unlinkPack', 'setAllDisabled', 'filters',
   'updateMod', 'orphans', 'conflicts', 'preview', 'sync', 'publish', 'follow', 'checkFollow', 'analyzeCrash', 'javaList',
-  'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode',
+  'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serverProps', 'setServerProps',
+  'serverPlayers', 'playerAction', 'backups', 'backup', 'restoreBackup', 'deleteBackup',
   'pickFolder', 'saveFile', 'openFile', 'openFolder', 'openProfileFolder', 'openExternal', 'profilesDir', 'installUpdate']
 contextBridge.exposeInMainWorld('api', Object.fromEntries(names.map(n => [n, (...a) => ipcRenderer.invoke(n, ...a)])))
 contextBridge.exposeInMainWorld('platform', process.platform)

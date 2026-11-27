@@ -48,7 +48,15 @@ Build locally: `npm run dist` (installer needs Windows or Wine; `npx electron-bu
 
 ## Minecraft server
 
-Server tab (Minecraft profiles): accept the EULA, Start. Runs Vanilla, Fabric, Forge or NeoForge with this profile's server-side mods (client-only Modrinth mods are skipped), with a live console. "Get public address" opens a free bore.pub tunnel so friends can join without port forwarding; "Copy invite link" sends the mods and the server address, which is added to their server list.
+Server tab (Minecraft profiles), a self-hosting panel similar to SquidServers:
+
+- Start / Stop / Restart on this PC: Vanilla, Fabric, Forge or NeoForge, Java installed automatically.
+- Modpacks: the server gets the profile's mods minus client-only ones. Every jar is checked on Modrinth by SHA1, so this works for modpacks, CurseForge and local files too.
+- No port forwarding: "Get public address" opens a free bore.pub tunnel. "Copy invite link" sends friends the mods + server address.
+- Bedrock crossplay: Geyser + Floodgate (Fabric/NeoForge), Bedrock address shown (LAN; UDP).
+- Console with commands, Players (online list, op/kick/ban, whitelist), Settings (startup + server.properties editor: game mode, difficulty, PvP, seed, max players, whitelist…), Backups (back up now, back up on stop, restore, delete).
+- Auto-restart after crashes (max 3 in 10 minutes).
+- Closing the window while a server runs keeps it running in the tray.
 
 ## Minecraft launcher
 

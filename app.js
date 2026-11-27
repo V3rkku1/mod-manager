@@ -529,7 +529,7 @@ window.onEvent?.((e, d) => {
     if (cur?.id === d.pid) playButton()
   }
   if (e === 'dl') dlUpdate(d)
-  if ((e === 'slog' || e === 'sstatus') && cur?.id === d.pid && tab === 'server') e === 'slog' ? appendTo($('#slog'), d.line) : showServer()
+  if ((e === 'slog' || e === 'sstatus') && cur?.id === d.pid && tab === 'server') e === 'slog' ? appendTo($('#slog'), d.line) : srvTab !== 'settings' && showServer()
   if (e === 'log' && cur?.id === d.pid && tab === 'logs' && $('#logsel')?.value === 'live') appendLog(d.line)
 })
 
@@ -758,38 +758,104 @@ function dlUpdate(d) {
 
 // ---- Minecraft server ----
 const appendTo = (v, line) => { if (!v) return; const stick = v.scrollTop + v.clientHeight >= v.scrollHeight - 30; const d = document.createElement('div'); d.textContent = line; d.className = logClass(line); v.append(d); if (stick) v.scrollTop = v.scrollHeight }
+let srvTab = 'console'
 async function showServer() {
-  const id = cur.id, s = await api.serverStatus(id), o = cur.server || {}
+  const id = cur.id, s = await api.serverStatus(id)
   if (cur.id !== id || tab !== 'server') return
+  const o = { maxMem: 2048, port: 25565, online: true, ...s.opts }
   const state = !s.running ? 'Stopped' : s.online ? 'Online' : 'Starting…'
+  const tabs = ['console', 'players', 'settings', 'backups'].map(t => `<button data-stab="${t}" class="${srvTab === t ? 'on' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')
   $('#list').innerHTML = `<div class="srv">
     <div class="srvhead"><span class="dot ${s.online ? 'on' : s.running ? 'mid' : ''}"></span><b>${state}</b>
-      ${s.running ? `<button id="srvStop" class="danger">${ic('stop')} Stop</button>` : ''}</div>
+      ${s.online ? `<span class="muted small">${s.players.length} player${s.players.length === 1 ? '' : 's'} online · since ${new Date(s.since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>` : ''}
+      ${s.running ? `<button id="srvRestart">${ic('refresh')} Restart</button><button id="srvStop" class="danger">${ic('stop')} Stop</button>` : `<button id="srvStart" class="primary">${ic('play')} Start server</button>`}</div>
     ${s.running ? `<div class="addr">
         <div><small>SAME WI-FI / LAN</small><code>${esc(s.lan || '')}</code><button class="icon" data-copy-text="${esc(s.lan || '')}">${ic('copy')}</button></div>
         <div><small>ONLINE (FRIENDS ANYWHERE)</small>${s.address ? `<code>${esc(s.address)}</code><button class="icon" data-copy-text="${esc(s.address)}">${ic('copy')}</button>`
           : `<button id="srvShare" ${s.online ? '' : 'disabled'}>${ic('globe')} Get public address</button>`}</div>
-        ${s.address ? `<button id="srvInvite" class="primary">${ic('share')} Copy invite link (mods + server)</button>` : ''}</div>`
-    : `<form class="opts" id="srvForm">
-        <div class="row"><label>MEMORY (MB)<input name="maxMem" type="number" min="1024" step="512" value="${o.maxMem || 2048}"></label>
-        <label>PORT<input name="port" type="number" min="1024" max="65535" value="${o.port || 25565}"></label></div>
-        <label class="check"><input type="checkbox" name="online" class="switch" checked> Only players with real Minecraft accounts (online mode)</label>
-        <label class="check"><input type="checkbox" name="eula" class="switch"> I agree to the <a data-href="https://aka.ms/MinecraftEULA">Minecraft EULA</a></label>
-        <button type="button" id="srvStart" class="primary">${ic('play')} Start server</button>
-        <p class="muted small">Runs ${esc(cur.mc.loader)} ${esc(cur.mc.version)} on this PC with this profile's server-side mods (client-only Modrinth mods are skipped).
-          "Get public address" opens a free bore.pub tunnel so friends can join without port forwarding.</p></form>`}
-    <div id="slog" class="console">${s.log.map(l => `<div class="${logClass(l)}">${esc(l)}</div>`).join('')}</div>
-    <input id="scmd" placeholder="Type a server command (e.g. op YourName) and press Enter" ${s.running ? '' : 'disabled'}></div>`
-  const v = $('#slog'); v.scrollTop = v.scrollHeight
+        ${s.bedrock ? `<div><small>BEDROCK (LAN, UDP)</small><code>${esc(s.bedrock)}</code><button class="icon" data-copy-text="${esc(s.bedrock)}">${ic('copy')}</button></div>` : ''}
+        ${s.address ? `<button id="srvInvite" class="primary">${ic('share')} Copy invite link (mods + server)</button>` : ''}</div>` : ''}
+    <div class="dtabs stabs">${tabs}</div><div id="spane"></div></div>`
+  const pane = $('#spane')
+  if (srvTab === 'console') {
+    pane.innerHTML = `<div id="slog" class="console">${s.log.map(l => `<div class="${logClass(l)}">${esc(l)}</div>`).join('')}</div>
+      <input id="scmd" placeholder="Type a server command (e.g. time set day) and press Enter" ${s.running ? '' : 'disabled'}>`
+    $('#slog').scrollTop = $('#slog').scrollHeight
+  }
+  if (srvTab === 'players') {
+    const pl = await api.serverPlayers(id), btn = (a, n, label, cls = '') => `<button data-pact="${a}" data-name="${esc(n)}" class="${cls}" ${s.running ? '' : 'disabled'}>${label}</button>`
+    const list = (title, names, acts) => `<div class="section"><h4>${title} (${names.length})</h4>${names.map(n => `<div class="acct"><img src="https://mc-heads.net/avatar/${esc(n)}/32" alt=""><b>${esc(n)}</b>${acts(n)}</div>`).join('') || '<p class="muted small">Nobody yet.</p>'}</div>`
+    pane.innerHTML = `${s.running ? '' : '<p class="muted small">Start the server to change players.</p>'}
+      <div class="row addp"><input id="plname" placeholder="Player name" maxlength="16"><button data-padd="allow" ${s.running ? '' : 'disabled'}>Add to whitelist</button><button data-padd="op" ${s.running ? '' : 'disabled'}>Make operator</button></div>
+      ${list('ONLINE', pl.online, n => btn('op', n, 'Op') + btn('kick', n, 'Kick') + btn('ban', n, 'Ban', 'danger'))}
+      ${list('OPERATORS', pl.ops, n => btn('deop', n, 'Remove op'))}
+      ${list('WHITELIST', pl.whitelist, n => btn('disallow', n, 'Remove'))}
+      ${list('BANNED', pl.banned, n => btn('pardon', n, 'Unban'))}`
+  }
+  if (srvTab === 'settings') {
+    const pr = await api.serverProps(id), v = (k, d) => esc(pr[k] ?? d), sel = (k, opts, d) => `<select name="${k}">${opts.map(x => `<option ${String(pr[k] ?? d) === x ? 'selected' : ''}>${x}</option>`).join('')}</select>`
+    const tog = (k, label, d) => `<label class="check"><input type="checkbox" class="switch" data-prop="${k}" ${String(pr[k] ?? d) === 'true' ? 'checked' : ''}> ${label}</label>`
+    pane.innerHTML = `<form class="opts" id="srvForm"><h4 class="muted">STARTUP</h4>
+        <div class="row"><label>MEMORY (MB)<input name="maxMem" type="number" min="1024" step="512" value="${+o.maxMem}"></label>
+        <label>PORT<input name="port" type="number" min="1024" max="65535" value="${+o.port}"></label></div>
+        <label class="check"><input type="checkbox" name="online" class="switch" ${o.online ? 'checked' : ''}> Only real Minecraft accounts (online mode)</label>
+        <label class="check"><input type="checkbox" name="geyser" class="switch" ${o.geyser ? 'checked' : ''}> Let Bedrock players join (Geyser + Floodgate, Fabric/NeoForge)</label>
+        <label class="check"><input type="checkbox" name="autoRestart" class="switch" ${o.autoRestart ? 'checked' : ''}> Restart automatically if it crashes</label>
+        <label class="check"><input type="checkbox" name="backupOnStop" class="switch" ${o.backupOnStop ? 'checked' : ''}> Back up the world every time it stops</label>
+        <label class="check"><input type="checkbox" name="eula" class="switch" ${o.eula ? 'checked' : ''}> I agree to the <a data-href="https://aka.ms/MinecraftEULA">Minecraft EULA</a></label>
+      </form>
+      <form class="opts" id="propsForm"><h4 class="muted">WORLD & RULES ${s.running ? '<span class="small">(applies after restart)</span>' : ''}</h4>
+        <label>MESSAGE OF THE DAY<input name="motd" value="${v('motd', cur.name)}"></label>
+        <div class="row"><label>GAME MODE${sel('gamemode', ['survival', 'creative', 'adventure', 'spectator'], 'survival')}</label>
+          <label>DIFFICULTY${sel('difficulty', ['peaceful', 'easy', 'normal', 'hard'], 'easy')}</label></div>
+        <div class="row"><label>MAX PLAYERS<input name="max-players" type="number" min="1" max="200" value="${v('max-players', 10)}"></label>
+          <label>VIEW DISTANCE<input name="view-distance" type="number" min="3" max="32" value="${v('view-distance', 10)}"></label></div>
+        <div class="row"><label>WORLD SEED<input name="level-seed" value="${v('level-seed', '')}" placeholder="Random"></label>
+          <label>SPAWN PROTECTION<input name="spawn-protection" type="number" min="0" value="${v('spawn-protection', 16)}"></label></div>
+        ${tog('pvp', 'PvP', 'true')}${tog('white-list', 'Whitelist only', 'false')}${tog('allow-flight', 'Allow flight (needed by some mods)', 'false')}
+        ${tog('hardcore', 'Hardcore', 'false')}${tog('allow-nether', 'Nether', 'true')}${tog('enable-command-block', 'Command blocks', 'false')}
+        <button class="primary">${ic('check')} Save world settings</button></form>`
+  }
+  if (srvTab === 'backups') {
+    const list = await api.backups(id)
+    pane.innerHTML = `<div class="row"><button id="bkNow" class="primary">${ic('download')} Back up now</button></div>
+      ${list.map(b => `<div class="acct"><b>${esc(b.name)}</b><span class="muted small">${(b.size / 1e6).toFixed(1)} MB · ${new Date(b.time).toLocaleString()}</span>
+        <button data-restore="${esc(b.name)}" ${s.running ? 'disabled title="Stop the server first"' : ''}>Restore</button><button class="icon" data-delbk="${esc(b.name)}">${ic('trash')}</button></div>`).join('') || '<p class="muted small">No backups yet.</p>'}`
+  }
+}
+function serverOpts() {
+  const f = $('#srvForm'), saved = profiles.find(p => p.id === cur.id)?.server || {}
+  if (!f) return saved
+  return { maxMem: f.maxMem.value, port: f.port.value, online: f.online.checked, geyser: f.geyser.checked, autoRestart: f.autoRestart.checked, backupOnStop: f.backupOnStop.checked, eula: f.eula.checked }
 }
 async function serverStart(btn) {
-  const f = $('#srvForm'), o = { eula: f.eula.checked, maxMem: f.maxMem.value, port: f.port.value, online: f.online.checked }
-  if (!o.eula) return toast('Accept the Minecraft EULA first', true)
+  const o = serverOpts()
+  if (!o.eula) { srvTab = 'settings'; await showServer(); return toast('Accept the Minecraft EULA in Settings first', true) }
   btn.disabled = true; btn.innerHTML = `${ic('refresh', 'i spin')} Preparing…`
-  cur.server = o
-  if (!await run(() => api.serverStart(cur.id, o))) return showServer()
+  srvTab = 'console'
+  const ok = await run(() => api.serverStart(cur.id, o))
+  if (ok) cur.server = o, setProfile({ ...cur, server: o })
   showServer()
 }
+$('#list').addEventListener('click', async e => {
+  if (tab !== 'server') return
+  const t = e.target.closest('button'); if (!t) return
+  const id = cur.id
+  if (t.dataset.stab) return srvTab = t.dataset.stab, showServer()
+  if (t.id === 'srvRestart') return run(() => api.serverRestart(id))
+  if (t.dataset.pact) return run(async () => { await api.playerAction(id, t.dataset.pact, t.dataset.name); setTimeout(showServer, 800) })
+  if (t.dataset.padd) { const n = $('#plname').value.trim(); if (n) run(async () => { await api.playerAction(id, t.dataset.padd, n); setTimeout(showServer, 800) }); return }
+  if (t.id === 'bkNow') { t.disabled = true; const n = await run(() => api.backup(id)); if (n) toast(`Backup saved: ${n}`); return showServer() }
+  if (t.dataset.restore && confirm(`Restore ${t.dataset.restore}? The current world is replaced.`)) { if (await run(() => api.restoreBackup(id, t.dataset.restore))) toast('World restored'); return showServer() }
+  if (t.dataset.delbk && confirm(`Delete ${t.dataset.delbk}?`)) { await run(() => api.deleteBackup(id, t.dataset.delbk)); return showServer() }
+})
+$('#list').addEventListener('submit', async e => {
+  if (e.target.id !== 'propsForm') return
+  e.preventDefault()
+  const f = Object.fromEntries(new FormData(e.target))
+  e.target.querySelectorAll('[data-prop]').forEach(c => f[c.dataset.prop] = c.checked)
+  if (await run(() => api.setServerProps(cur.id, f))) toast('World settings saved')
+})
 $('#list').addEventListener('keydown', e => {
   if (e.target.id !== 'scmd' || e.key !== 'Enter' || !e.target.value.trim()) return
   api.serverCmd(cur.id, e.target.value); e.target.value = ''

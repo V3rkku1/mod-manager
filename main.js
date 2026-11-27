@@ -1,8 +1,8 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Tray, Menu, nativeImage } = require('electron')
 const path = require('path')
 const { autoUpdater } = require('electron-updater')
 
-let win
+let win, tray, quitting
 const nxmArg = argv => argv.find(a => a.startsWith('nxm://'))
 const linkArg = argv => argv.find(a => a.startsWith('modmanager://'))
 if (!app.requestSingleInstanceLock()) app.quit()
@@ -45,6 +45,23 @@ app.whenReady().then(() => {
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   })
   win.loadFile('index.html')
+  // Servers keep running in the tray when the window is closed (like a host app).
+  win.on('close', e => {
+    if (quitting || !core.serversRunning().length) return
+    e.preventDefault(); win.hide()
+    if (tray) return
+    tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'build/icon.png')).resize({ width: 16, height: 16 }))
+    tray.setToolTip('Mod Manager — server running')
+    tray.on('click', () => win.show())
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Open Mod Manager', click: () => win.show() },
+      { label: 'Stop servers and quit', click: () => {
+        quitting = true; core.serversRunning().forEach(id => core.serverStop(id))
+        const t = setInterval(() => { if (!core.serversRunning().length) clearInterval(t), app.quit() }, 500)
+        setTimeout(() => app.quit(), 30000)
+      } },
+    ]))
+  })
   win.webContents.once('did-finish-load', () => {
     const l = nxmArg(process.argv); if (l) win.webContents.send('nxm', l)
     const m = linkArg(process.argv); if (m) win.webContents.send('link', m)

@@ -222,12 +222,111 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     return save(p)
   }
 
+  // ---- Minecraft server internals ----
+  const PROPS = ['motd', 'gamemode', 'difficulty', 'pvp', 'max-players', 'view-distance', 'simulation-distance', 'allow-flight', 'spawn-protection',
+    'level-seed', 'level-name', 'hardcore', 'white-list', 'enforce-whitelist', 'allow-nether', 'spawn-monsters', 'enable-command-block', 'online-mode', 'server-port']
+  const readProps = file => { try { return Object.fromEntries(fs.readFileSync(file, 'utf8').split(/\r?\n/).filter(l => l && !l.startsWith('#') && l.includes('=')).map(l => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)])) } catch { return {} } }
+  const lastLogs = {}, crashes = {}
+  const GEYSER = { fabric: ['geyser', 'floodgate'], neoforge: ['geyser', 'floodgate'] }
+
+  async function backupWorld(pid) {
+    const sdir = path.join(dir(pid), 'server'), s = servers[pid]
+    const level = readProps(path.join(sdir, 'server.properties'))['level-name'] || 'world'
+    if (!fs.existsSync(path.join(sdir, level))) throw new Error('No world yet: start the server once')
+    if (s?.online) { s.child.stdin.write('save-off\nsave-all flush\n'); await new Promise(r => setTimeout(r, 3000)) }
+    try {
+      // shortcut: whole world is zipped in memory; fine for normal worlds, slow for multi-GB ones.
+      const zip = {}
+      for (const d of [level, `${level}_nether`, `${level}_the_end`]) for (const f of walk(path.join(sdir, d))) if (!f.endsWith('session.lock')) zip[`${d}/${f}`] = fs.readFileSync(path.join(sdir, d, f))
+      const name = `${level}-${new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)}.zip`
+      write(path.join(dir(pid), 'server-backups'), name, zipSync(zip, { level: 1 }))
+      return name
+    } finally { if (s?.online) s.child.stdin.write('save-on\n') }
+  }
+
+  async function startServer(pid, { eula, maxMem = 2048, port = 25565, online = true, geyser = false, autoRestart = false, backupOnStop = false } = {}) {
+    if (!eula) throw new Error('Accept the Minecraft EULA first')
+    if (servers[pid]) throw new Error('Server already running')
+    let p = load(pid)
+    if (p.type !== 'modrinth') throw new Error('Servers are for Minecraft profiles')
+    p = save({ ...p, server: { maxMem: +maxMem, port: +port, online: !!online, geyser: !!geyser, autoRestart: !!autoRestart, backupOnStop: !!backupOnStop } })
+    const sdir = path.join(dir(pid), 'server'), s = servers[pid] = { log: [], online: false, players: new Set() }
+    const log = line => { s.log.push(line); if (s.log.length > 3000) s.log.shift(); emit('slog', { pid, line }) }
+    const status = () => emit('sstatus', { pid })
+    try {
+      log('Preparing server files…')
+      const plan = await mcl.prepareServer({ mc: p.mc.version, loader: p.mc.loader, loaderVersion: p.mc.loaderVersion, dir: sdir, log })
+      // Server-side files only: skip Modrinth projects marked server_side "unsupported" and modpack files marked client-only.
+      const on = p.mods.filter(m => !m.disabled)
+      const want = on.flatMap(m => m.files.filter(f => (/^mods\/.+\.jar$/i.test(f) || (m.pack && /^(config|defaultconfigs|kubejs|scripts|datapacks)\//.test(f))) && !m.clientOnly?.includes(f)))
+      // Look every jar up on Modrinth by SHA1 (works for packs, CurseForge and local files too) and skip client-only projects.
+      const hash = Object.fromEntries(want.filter(f => f.endsWith('.jar')).map(f => [crypto.createHash('sha1').update(fs.readFileSync(inside(files(p), f))).digest('hex'), f]))
+      const found = Object.keys(hash).length ? await json(`${MR}/version_files`, { 'content-type': 'application/json' }, { method: 'POST', body: JSON.stringify({ hashes: Object.keys(hash), algorithm: 'sha1' }) }).catch(() => ({})) : {}
+      const ids = [...new Set(Object.values(found).map(v => v.project_id))]
+      const side = {}
+      for (let i = 0; i < ids.length; i += 100) for (const x of await json(`${MR}/projects?ids=${q(ids.slice(i, i + 100))}`).catch(() => [])) side[x.id] = x.server_side
+      const clientOnly = new Set(Object.entries(found).filter(([, v]) => side[v.project_id] === 'unsupported').map(([h]) => hash[h]))
+      fs.rmSync(path.join(sdir, 'mods'), { recursive: true, force: true })
+      for (const f of want) if (!clientOnly.has(f)) write(sdir, f, fs.readFileSync(inside(files(p), f)))
+      if (clientOnly.size) log(`Skipped ${clientOnly.size} client-only mods`)
+      if (geyser) {
+        if (!GEYSER[p.mc.loader]) throw new Error('Bedrock crossplay (Geyser) needs a Fabric or NeoForge profile')
+        // Geyser + Floodgate and their required dependencies (e.g. Fabric API) unless the profile already has them.
+        const have = new Set([...Object.values(found).map(v => v.project_id), ...on.map(m => m.id)]), todo = [...GEYSER[p.mc.loader]]
+        while (todo.length) {
+          const slug = todo.shift()
+          const v = (await json(`${MR}/project/${slug}/version?loaders=${q([p.mc.loader])}&game_versions=${q([p.mc.version])}`))[0]
+          if (!v) throw new Error(`${slug} has no build for ${p.mc.loader} ${p.mc.version}`)
+          if (have.has(v.project_id)) continue
+          have.add(v.project_id)
+          const f = v.files.find(f => f.primary) || v.files[0]
+          write(sdir, `mods/${path.basename(f.filename)}`, await lib.bytes(f.url))
+          todo.push(...v.dependencies.filter(d => d.dependency_type === 'required' && d.project_id && !have.has(d.project_id)).map(d => d.project_id))
+        }
+        s.bedrock = `${(s.lanIp = lanIp())}:19132`
+      }
+      fs.writeFileSync(path.join(sdir, 'eula.txt'), 'eula=true\n')
+      const propsFile = path.join(sdir, 'server.properties'), props = readProps(propsFile)
+      fs.writeFileSync(propsFile, Object.entries({ motd: p.name.replace(/[\r\n]/g, ''), 'max-players': 10, ...props, 'server-port': +port, 'online-mode': !!online })
+        .map(([k, v]) => `${k}=${v}`).join('\n') + '\n')
+      const child = s.child = spawn(plan.java, [`-Xmx${+maxMem}M`, '-Dlog4j2.formatMsgNoLookups=true', ...plan.args], { cwd: sdir })
+      const out = d => String(d).split(/\r?\n/).filter(Boolean).forEach(l => {
+        log(l)
+        if (!s.online && /Done \(/.test(l)) s.online = true, s.since = Date.now(), status()
+        const j = l.match(/: (\w{1,16}) joined the game/), left = l.match(/: (\w{1,16}) left the game/)
+        if (j) s.players.add(j[1]), status()
+        if (left) s.players.delete(left[1]), status()
+      })
+      child.stdout.on('data', out); child.stderr.on('data', out)
+      child.on('exit', async code => {
+        s.tunnel?.close(); log(`Server stopped (code ${code})`)
+        lastLogs[pid] = s.log; delete servers[pid]
+        const opts = load(pid).server || {}
+        if (opts.backupOnStop) await backupWorld(pid).then(n => log(`Backup saved: ${n}`)).catch(e => log(`Backup failed: ${e.message}`))
+        status()
+        // Auto-restart after a crash, or after the user pressed Restart.
+        // At most 3 crash restarts within 10 minutes, so a broken mod doesn't loop forever.
+        const recent = (crashes[pid] = [...(crashes[pid] || []), Date.now()].filter(t => Date.now() - t < 600e3))
+        if (!s.restart && !s.stopping && opts.autoRestart && recent.length > 3) return log('Crashed 3 times in a row — not restarting. Check the console.')
+        if (s.restart || (opts.autoRestart && !s.stopping)) {
+          log(s.restart ? 'Restarting…' : 'Server crashed — restarting in 5 seconds…')
+          setTimeout(() => startServer(pid, { ...opts, eula: true }).catch(e => emit('slog', { pid, line: `Restart failed: ${e.message}` })), s.restart ? 500 : 5000)
+        }
+      })
+      s.lan = `${lanIp()}:${port}`
+      status()
+      return true
+    } catch (e) { lastLogs[pid] = s.log; delete servers[pid]; status(); throw e }
+  }
+  const lanIp = () => Object.values(os.networkInterfaces()).flat().find(i => i.family === 'IPv4' && !i.internal)?.address || 'localhost'
+
   // One write at a time: profile.json is read-modify-written.
   let chain = Promise.resolve()
   const serial = fn => (...a) => { const r = chain.then(() => fn(...a)); chain = r.catch(() => {}); return r }
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
-    'preview', 'checkFollow', 'publish', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode',
+    'preview', 'checkFollow', 'publish', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -398,41 +497,62 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     },
 
     // ---- Minecraft server (local, optional public address through bore.pub) ----
-    serverStatus: pid => { const s = servers[pid]; return s ? { running: true, online: s.online, address: s.address, lan: s.lan, log: s.log } : { running: false, log: [] } },
+    serverStatus: pid => {
+      const s = servers[pid], p = load(pid)
+      return { running: !!s, online: !!s?.online, address: s?.address, lan: s?.lan, bedrock: s?.bedrock, players: s ? [...s.players] : [],
+        since: s?.since, log: s?.log || lastLogs[pid] || [], opts: p.server || {} }
+    },
     serverCmd: (pid, cmd) => { servers[pid]?.child.stdin.write(String(cmd).replace(/\n/g, ' ') + '\n'); return true },
-    serverStop: pid => { servers[pid]?.child.stdin.write('stop\n'); return true },
-    serverStart: async (pid, { eula, maxMem = 2048, port = 25565, online = true } = {}) => {
-      if (!eula) throw new Error('Accept the Minecraft EULA first')
-      if (servers[pid]) throw new Error('Server already running')
-      const p = load(pid)
-      if (p.type !== 'modrinth') throw new Error('Servers are for Minecraft profiles')
-      const sdir = path.join(dir(pid), 'server'), s = servers[pid] = { log: [], online: false }
-      const log = line => { s.log.push(line); if (s.log.length > 3000) s.log.shift(); emit('slog', { pid, line }) }
-      const status = () => emit('sstatus', { pid, running: !!servers[pid], online: s.online, address: s.address, lan: s.lan })
-      try {
-        log('Preparing server files…')
-        const plan = await mcl.prepareServer({ mc: p.mc.version, loader: p.mc.loader, loaderVersion: p.mc.loaderVersion, dir: sdir, log })
-        // Server-side mods only: skip Modrinth projects marked server_side "unsupported".
-        const jars = p.mods.filter(m => !m.disabled).flatMap(m => m.files.filter(f => /^mods\/.+\.jar$/i.test(f)).map(f => ({ m, f })))
-        const mr = jars.filter(j => srcOf(p, j.m) === 'modrinth').map(j => j.m.id)
-        const side = mr.length ? Object.fromEntries((await json(`${MR}/projects?ids=${q([...new Set(mr)])}`)).map(x => [x.id, x.server_side])) : {}
-        fs.rmSync(path.join(sdir, 'mods'), { recursive: true, force: true })
-        for (const { m, f } of jars) if (side[m.id] !== 'unsupported') write(sdir, f, fs.readFileSync(inside(files(p), f)))
-        fs.writeFileSync(path.join(sdir, 'eula.txt'), 'eula=true\n')
-        const props = path.join(sdir, 'server.properties')
-        const kv = fs.existsSync(props) ? fs.readFileSync(props, 'utf8') : `motd=${p.name.replace(/[\r\n]/g, '')}\nmax-players=10\n`
-        fs.writeFileSync(props, kv.replace(/^server-port=.*\n?/m, '').replace(/^online-mode=.*\n?/m, '') + `server-port=${+port}\nonline-mode=${!!online}\n`)
-        const child = s.child = spawn(plan.java, [`-Xmx${+maxMem}M`, '-Dlog4j2.formatMsgNoLookups=true', ...plan.args], { cwd: sdir })
-        const out = d => String(d).split(/\r?\n/).filter(Boolean).forEach(l => {
-          log(l)
-          if (!s.online && /Done \(/.test(l)) s.online = true, status()
-        })
-        child.stdout.on('data', out); child.stderr.on('data', out)
-        child.on('exit', code => { s.tunnel?.close(); log(`Server stopped (code ${code})`); delete servers[pid]; status() })
-        s.lan = `${Object.values(os.networkInterfaces()).flat().find(i => i.family === 'IPv4' && !i.internal)?.address || 'localhost'}:${port}`
-        status()
-        return true
-      } catch (e) { delete servers[pid]; status(); throw e }
+    serverStop: pid => { const s = servers[pid]; if (s) s.stopping = true, s.child.stdin.write('stop\n'); return true },
+    serversRunning: () => Object.keys(servers),
+    serverStart: (pid, opts = {}) => startServer(pid, opts),
+    serverRestart: async pid => {
+      const s = servers[pid]; if (!s) throw new Error('Server is not running')
+      s.restart = true; s.stopping = true; s.child.stdin.write('stop\n'); return true
+    },
+
+    // server.properties editor (whitelisted keys only).
+    serverProps: pid => readProps(path.join(dir(pid), 'server', 'server.properties')),
+    setServerProps: (pid, patch) => {
+      const file = path.join(dir(pid), 'server', 'server.properties'), cur = readProps(file)
+      for (const [k, v] of Object.entries(patch)) if (PROPS.includes(k)) cur[k] = String(v).replace(/[\r\n]/g, ' ').slice(0, 200)
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, Object.entries(cur).map(([k, v]) => `${k}=${v}`).join('\n') + '\n')
+      return cur
+    },
+
+    // Players: online (from log), ops / whitelist / bans (server json files); actions go through the console.
+    serverPlayers: pid => {
+      const sdir = path.join(dir(pid), 'server'), names = f => { try { return JSON.parse(fs.readFileSync(path.join(sdir, f), 'utf8')).map(x => x.name) } catch { return [] } }
+      return { online: [...(servers[pid]?.players || [])], ops: names('ops.json'), whitelist: names('whitelist.json'), banned: names('banned-players.json') }
+    },
+    playerAction: (pid, action, name) => {
+      const cmd = { op: 'op', deop: 'deop', kick: 'kick', ban: 'ban', pardon: 'pardon', allow: 'whitelist add', disallow: 'whitelist remove' }[action]
+      if (!cmd || !/^[A-Za-z0-9_]{1,16}$/.test(name)) throw new Error('Invalid player action')
+      if (!servers[pid]) throw new Error('Start the server to manage players')
+      servers[pid].child.stdin.write(`${cmd} ${name}\n`)
+      if (action === 'allow' || action === 'disallow') servers[pid].child.stdin.write('whitelist reload\n')
+      return true
+    },
+
+    // World backups (zip of the world folders), restore while stopped.
+    backups: pid => {
+      const b = path.join(dir(pid), 'server-backups')
+      return fs.existsSync(b) ? fs.readdirSync(b).filter(f => f.endsWith('.zip')).map(f => ({ name: f, size: fs.statSync(path.join(b, f)).size, time: fs.statSync(path.join(b, f)).mtimeMs })).sort((a, b) => b.time - a.time) : []
+    },
+    backup: pid => backupWorld(pid),
+    restoreBackup: (pid, name) => {
+      if (servers[pid]) throw new Error('Stop the server before restoring')
+      if (!/^[\w.-]+\.zip$/.test(name)) throw new Error('Bad backup name')
+      const sdir = path.join(dir(pid), 'server'), level = readProps(path.join(sdir, 'server.properties'))['level-name'] || 'world'
+      const zip = unzipSync(fs.readFileSync(inside(path.join(dir(pid), 'server-backups'), name)))
+      for (const d of [level, `${level}_nether`, `${level}_the_end`]) fs.rmSync(inside(sdir, d), { recursive: true, force: true })
+      for (const [f, data] of Object.entries(zip)) if (!f.endsWith('/')) write(sdir, f, data)
+      return true
+    },
+    deleteBackup: (pid, name) => {
+      if (!/^[\w.-]+\.zip$/.test(name)) throw new Error('Bad backup name')
+      fs.rmSync(inside(path.join(dir(pid), 'server-backups'), name), { force: true }); return true
     },
     // Public address for friends outside your network.
     serverShare: async pid => {
@@ -440,9 +560,9 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       if (!s) throw new Error('Start the server first')
       if (s.address) return s.address
       const port = +s.lan.split(':')[1]
-      s.tunnel = await tunnel.open(port, { onError: () => { s.address = null; emit('sstatus', { pid, running: true, online: s.online, lan: s.lan }) } })
+      s.tunnel = await tunnel.open(port, { onError: () => { s.address = null; emit('sstatus', { pid }) } })
       s.address = `${s.tunnel.host}:${s.tunnel.port}`
-      emit('sstatus', { pid, running: true, online: s.online, address: s.address, lan: s.lan })
+      emit('sstatus', { pid })
       return s.address
     },
     // Invite: share code + server address; friends' import adds it to their server list.

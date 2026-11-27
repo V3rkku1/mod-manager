@@ -348,3 +348,12 @@ pre.snip { background: #111214; color: #d4d7dc; padding: 10px; border-radius: 6p
 .console { background: #111214; color: #d4d7dc; font: 12px/1.5 ui-monospace, Consolas, monospace; padding: 12px; border-radius: 8px; height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
 .console .w { color: var(--warn); } .console .e { color: #f23f42; }
 #scmd { font-family: ui-monospace, Consolas, monospace; }
+.stabs { background: none; padding: 0; }
+.srvhead .small { margin-right: auto; }
+.srvhead b { margin-right: 0; }
+.srvhead > b + .small, .srvhead > b:last-of-type { margin-right: auto; }
+#spane { display: grid; gap: 12px; }
+#spane .acct { gap: 8px; }
+#spane .acct .small { margin-left: auto; }
+.addp input { flex: 2; }
+#propsForm .check, #srvForm .check { display: flex; }
