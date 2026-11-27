@@ -535,13 +535,14 @@ async function importWith(btn, fn) {
   btn.disabled = false; btn.innerHTML = html
   if (res) created(res)
 }
-$('#importFile').onclick = async e => {
+// Buttons are looked up directly: e.currentTarget is null after an await.
+$('#importFile').onclick = async () => {
   const file = await api.openFile(['mmpack', 'mrpack']); if (!file) return
   const name = $('#newForm').elements.name.value.trim()
-  importWith(e.currentTarget, () => file.endsWith('.mrpack') ? api.importInstance(file, name) : api.importFile(file, name))
+  importWith($('#importFile'), () => /\.mrpack$/i.test(file) ? api.importInstance(file, name) : api.importFile(file, name))
 }
-$('#importFolder').onclick = async e => {
-  const dir = await api.pickFolder(); if (dir) importWith(e.currentTarget, () => api.importInstance(dir, $('#newForm').elements.name.value.trim()))
+$('#importFolder').onclick = async () => {
+  const dir = await api.pickFolder(); if (dir) importWith($('#importFolder'), () => api.importInstance(dir, $('#newForm').elements.name.value.trim()))
 }
 $('#newForm').onsubmit = async e => {
   e.preventDefault()
