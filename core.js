@@ -1,6 +1,6 @@
 // Mod manager core: profiles on disk + per-site sources. Skipped: database, cache layer, download queue.
 const fs = require('fs'), path = require('path'), os = require('os'), zlib = require('zlib')
-const { spawn, execFileSync } = require('child_process')
+const { spawn, execFile, execFileSync } = require('child_process')
 const net = require('net')
 const { zipSync, unzipSync, strToU8, strFromU8 } = require('fflate')
 const { json, get, q, inside, write, remove, walk } = require('./lib')
@@ -44,6 +44,19 @@ function findLauncher(kind, custom) {
   if (process.platform === 'linux' && fs.existsSync(flat)) return { exe: 'flatpak', args: ['run', 'org.prismlauncher.PrismLauncher'], cfg: 'prismlauncher.cfg', data: flat }
   return null
 }
+
+// Running Minecraft (java) started by another launcher with --gameDir <dir>: its pid, or null.
+function gamePid(dir) {
+  const norm = t => process.platform === 'win32' ? t.replace(/\//g, '\\').toLowerCase() : t
+  const args = process.platform === 'win32'
+    ? ['powershell.exe', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process -Filter "Name like 'java%'" | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }`]]
+    : ['ps', ['-eo', 'pid=,args=']]
+  return new Promise(ok => execFile(...args, { windowsHide: true, timeout: 15e3 }, (err, out) => {
+    const line = !err && out.split('\n').map(norm).find(l => /java/i.test(l) && /--gamedir/i.test(l) && l.includes(norm(dir)))
+    ok(line ? +line.trim().split(/\s+/)[0] : null)
+  }))
+}
+const killTree = pid => process.platform === 'win32' ? spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }) : process.kill(pid)
 
 // Steam libraries -> installed games, from libraryfolders.vdf + appmanifest_*.acf (Windows only).
 function steamGames() {
@@ -345,6 +358,22 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     }
     if (!validData(d)) throw new Error('Invalid share code')
     return { d, cfg, rev, owner }
+  }
+  // Game started by the official launcher: spot it by its --gameDir (for 15 min after Play), then track it so Play shows Stop.
+  const watching = {}
+  async function watchGame(pid, dir) {
+    const token = watching[pid] = {}
+    for (const end = Date.now() + 15 * 60e3; Date.now() < end && watching[pid] === token && !running[pid]; await new Promise(r => setTimeout(r, 4000))) {
+      const gp = await gamePid(dir)
+      if (!gp || running[pid]) continue
+      const me = running[pid] = { ext: gp, child: { kill: () => killTree(gp) } }
+      emit('status', { pid, text: 'Running' })
+      while (running[pid] === me && await gamePid(dir) === gp) await new Promise(r => setTimeout(r, 4000))
+      if (running[pid] === me) delete running[pid]
+      emit('status', { pid, text: null })
+      break
+    }
+    if (watching[pid] === token) delete watching[pid]
   }
   // Live share via a public GitHub Gist (listed on the owner's site page): needs a token with "gist" scope; friends only read,
   // so only the owner can change what followers get.
@@ -684,7 +713,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
     'preview', 'checkFollow', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
-    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'watchGame', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -1199,6 +1228,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
           exe ? run(exe, []) : run('explorer.exe', ['shell:AppsFolder\\Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft'])
           launched = true
         }
+        watchGame(pid, p.target) // also catches a game started from the launcher by hand
         return { profile: p.name, version: plan.id, launched }
       } finally { emit('status', { pid, text: null }) }
     },
@@ -1269,6 +1299,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
 
     // Play through Prism Launcher or MultiMC (settings.launcher) with no launcher window: it does the Microsoft login, Java and game files.
     // The instance's game folder is a link to this profile's folder, so mods, worlds and configs stay shared.
+    watchGame: pid => watchGame(pid, load(pid).target),
     playPrism: async pid => {
       const s = settings(), pr = findLauncher(s.launcher, s.prismPath)
       if (!pr) throw new Error(`${s.launcher === 'multimc' ? 'MultiMC' : 'Prism Launcher'} not found. Set its path in Settings → Accounts.`)

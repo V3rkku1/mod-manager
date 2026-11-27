@@ -47,7 +47,7 @@ let setupLeft = 0, running = new Set(), status = {}, filterCache = {}, chips = n
 function render() {
   const groups = [...new Set(profiles.map(p => p.group || ''))].sort()
   $('#rail').innerHTML = groups.map(g => (g ? `<div class="sep"></div><div class="rail-group" title="${esc(g)}">${esc(g)}</div>` : '')
-    + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''}" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}${Object.keys(updates[p.id] || {}).length ? `<i class="rbadge">${Object.keys(updates[p.id]).length}</i>` : ''}</button>`).join('')).join('')
+    + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''} ${running.has(p.id) ? 'playing' : ''}" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}${Object.keys(updates[p.id] || {}).length ? `<i class="rbadge">${Object.keys(updates[p.id]).length}</i>` : ''}</button>`).join('')).join('')
     + (profiles.length ? '<div class="sep"></div>' : '')
     + `<button class="pfp add" id="add" data-tip="New profile">${ic('plus')}</button>`
     + `<button class="pfp gear" id="settings" data-tip="${setupLeft ? 'Finish setup' : 'Settings'}">${ic('gear')}${setupLeft ? `<i class="rbadge">${setupLeft}</i>` : ''}</button>`
@@ -409,7 +409,7 @@ $('#play').onclick = () => run(async () => {
   if (!(await api.accounts()).length) {
     status[id] = 'Preparing…'; playButton()
     if (['prism', 'multimc'].includes((await api.getSettings()).launcher)) return api.playPrism(id).catch(e => { delete status[id]; playButton(); throw e })
-    try { const r = await api.playOfficial(id); toast(r.launched ? `Opened Minecraft Launcher — pick "${r.profile}" and press Play` : `Added "${r.profile}" to the Minecraft Launcher`) }
+    try { const r = await api.playOfficial(id); toast(r.launched ? `Opened Minecraft Launcher — pick "${r.profile}" and press Play. This button turns to Stop once the game runs.` : `Added "${r.profile}" to the Minecraft Launcher`) }
     finally { delete status[id]; playButton() }
     return
   }
@@ -599,6 +599,7 @@ function playButton() {
   const st = status[id], isRun = running.has(id)
   b.classList.toggle('stop', isRun)
   b.disabled = !!st && !isRun
+  b.title = isRun ? 'Stop the game (Ctrl+P)' : 'Deploy and start the game (Ctrl+P)'
   b.innerHTML = isRun ? `${ic('stop')} Stop` : st ? `${ic('refresh', 'i spin')} <span id="pplay">${esc(st)}</span>` : `${ic('play')} Play`
 }
 window.onEvent?.((e, d) => {
@@ -610,6 +611,7 @@ window.onEvent?.((e, d) => {
     } else if (d.text === 'Running') running.add(d.pid), delete status[d.pid]
     else status[d.pid] = d.text
     if (cur?.id === d.pid) playButton()
+    document.querySelector(`#rail [data-id="${d.pid}"]`)?.classList.toggle('playing', running.has(d.pid))
   }
   if (e === 'dl') dlUpdate(d)
   if (e === 'published') toast('Your friends got the updated mod list')
@@ -906,6 +908,7 @@ document.addEventListener('keydown', e => {
   if (k === 'k') e.preventDefault(), openQuick()
   if (k === ',') e.preventDefault(), openSettings()
   if (!cur) return
+  if (k === 'p' && !$('#play').disabled) { e.preventDefault(); $('#play').click() }
   if (k === 'f') { e.preventDefault(); if (tab !== 'browse') tab = 'browse', render(); $('#q').focus(); $('#q').select() }
   const tabsShown = [...document.querySelectorAll('#tabs [data-tab]')].filter(b => b.offsetParent)
   if (/^[1-9]$/.test(k) && tabsShown[k - 1]) e.preventDefault(), tabsShown[k - 1].click()
