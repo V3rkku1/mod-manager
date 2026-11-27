@@ -716,7 +716,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
     'preview', 'checkFollow', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
-    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'watchGame', 'playCustom', 'lxConfig', 'lxStatus', 'lxRun', 'lxDir', 'lxTools', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'watchGame', 'playCustom', 'lxConfig', 'lxStatus', 'lxRun', 'lxDir', 'lxTools', 'lxCatalog', 'lxLatest', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -1606,6 +1606,6 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       return install(p.id, 'nexus', m[1], m[2], { key: u.searchParams.get('key'), expires: u.searchParams.get('expires') })
     },
     // Launcher-X built in (launcherx.js): its own config file, so it is not tied to profiles.
-    ...(({ lxConfig, lxSave, lxPut, lxRemove, lxStatus, lxRun, lxDir, lxTools, lxInstallTools }) => ({ lxConfig, lxSave, lxPut, lxRemove, lxStatus, lxRun, lxDir, lxTools, lxInstallTools }))(LX),
+    ...(({ lxConfig, lxSave, lxPut, lxRemove, lxStatus, lxRun, lxDir, lxTools, lxInstallTools, lxCatalog, lxLatest }) => ({ lxConfig, lxSave, lxPut, lxRemove, lxStatus, lxRun, lxDir, lxTools, lxInstallTools, lxCatalog, lxLatest }))(LX),
   }).map(([k, fn]) => [k, parallel.includes(k) ? fn : serial(fn)]))
 }

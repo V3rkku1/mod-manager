@@ -1505,7 +1505,8 @@ async function drawLx() {
     <p class="muted small">Removing keeps your projects and downloaded files; add it again with + → Recomps.</p></form>`
     : `${warn}<div id="lxTools"></div>${c.game ? '' : `<div class="banner warn">${ic('alert')}<div><p>Pick the game exe in <button class="linkish" data-lx="toSettings">Settings</button> before Launch or Prepare shaders.</p></div></div>`}
     ${c.projects.map(p => `<div class="mod lxp" data-name="${esc(p.name)}"><div class="noicon lxicon">${initials(p.name)}</div>
-      <div class="body"><div class="top"><b>${esc(p.name)}</b><span class="tag">${esc(p.branch)}</span><span class="tag lxst">Checking…</span>${p.shaders?.length ? '<span class="tag">Shader prep</span>' : ''}</div><p>${esc(p.repo)}</p></div>
+      <div class="body"><div class="top"><b>${esc(p.name)}</b><span class="tag">${esc(p.branch)}</span><span class="tag lxst">Checking…</span>${p.shaders?.length ? '<span class="tag">Shader prep</span>' : ''}</div>
+        <p><a data-href="${esc(p.repo)}" title="Open on GitHub">${esc(p.repo.replace(/^https:\/\/github\.com\//, ''))}</a><span class="lxrel"></span></p></div>
       <div class="actions"><button class="play" data-lx="launch">${ic('play')} Launch</button>
         <button data-lx="update" title="Pull and build">${ic('refresh')}</button><button data-lx="rebuild" title="Rebuild">${ic('wrench')}</button>
         ${p.shaders?.length ? `<button data-lx="shaders" title="Prepare shaders: build if needed, then compile the game's shaders ahead so the first start doesn't stutter">${ic('flame')}</button>` : ''}
@@ -1518,12 +1519,24 @@ async function drawLx() {
       <label><span>SHADER PREP COMMANDS <span class="muted">(optional, one per line; {game} = game exe)</span></span><textarea name="shaders" rows="2" placeholder=".\\target\\release\\victory.exe preload ([IO.Path]::GetDirectoryName('{game}'))">${esc((e.shaders || []).join('\n'))}</textarea></label>
       <label><span>RUN COMMAND <span class="muted">({game} = game exe)</span></span><input name="run" value="${esc(e.run)}" placeholder=".\\target\\release\\app.exe"></label>
       <div class="row"><button type="button" data-lx="cancel">Cancel</button><button class="primary">${ic('check')} Save project</button></div></form>`
-    : `<button type="button" data-lx="add">${ic('plus')} Add project</button>`}`
+    : `<button type="button" data-lx="add">${ic('plus')} Add project</button>`}
+    <h4 class="lxh">MORE RECOMPS AND PORTS</h4><div id="lxCat" class="lxcat"><p class="muted">Loading…</p></div>`
   if (tab === 'lxprojects') api.lxTools().then(miss => {
     if (miss.length && $('#lxTools')) $('#lxTools').innerHTML = `<div class="banner warn">${ic('wrench')}<div><b>Needed to build: ${esc(miss.map(t => t.label).join(', '))}</b>
       <p>Installs with winget (Windows' own installer) in a PowerShell window. The C++ build tools are several GB and ask for admin rights.</p></div>
       <button data-lx="recheck">Check again</button><button class="primary" data-lx="tools" data-ids="${esc(miss.map(t => t.id).join(','))}">${ic('download')} Install</button></div>`
   }, () => {})
+  if (tab === 'lxprojects') {
+    for (const el of document.querySelectorAll('#lxList .lxp')) api.lxLatest(el.dataset.name).then(r => {
+      if (r) el.querySelector('.lxrel').innerHTML = ` · <a data-href="${esc(r.url)}">Latest release ${esc(r.tag)}</a>${r.date ? ` · ${ago(Date.parse(r.date))}` : ''}`
+    }, () => {})
+    api.lxCatalog().then(list => { if ($('#lxCat')) $('#lxCat').innerHTML = list.map(x => `<div class="mod lxp lxc" data-cat="${esc(x.name)}"><div class="noicon lxicon">${initials(x.title)}</div>
+      <div class="body"><div class="top"><b>${esc(x.title)}</b><span class="tag">${esc(x.kind)}</span>${x.release ? `<span class="tag">${esc(x.release.tag)}</span>` : ''}</div>
+        <p>${esc(x.game)} · needs ${esc(x.needs)}</p><p><a data-href="${esc(x.repo)}">${esc(x.repo.replace(/^https:\/\/github\.com\//, ''))}</a></p></div>
+      <div class="actions"><button data-href="${esc(x.release?.url || x.repo + '/releases/latest')}" title="Download the ready-made release">${ic('download')} Release</button>
+        ${x.build ? (x.added ? '<span class="tag">Added</span>' : `<button class="primary" data-lx="addcat" title="Add to Projects: downloads, builds and runs it from source">${ic('plus')} Build from source</button>`) : ''}</div></div>`).join('')
+    }, () => { if ($('#lxCat')) $('#lxCat').innerHTML = '<p class="muted">Could not load the list.</p>' })
+  }
   for (const el of document.querySelectorAll('#lxList .lxp')) api.lxStatus(el.dataset.name).then(t => {
     const tg = el.querySelector('.lxst'); tg.textContent = t; tg.classList.toggle('upd', /Update|not built/.test(t))
   }, () => {})
@@ -1537,6 +1550,10 @@ $('#lxList').addEventListener('click', async e => {
   const b = e.target.closest('[data-lx]'); if (!b) return
   const a = b.dataset.lx, name = b.closest('.lxp')?.dataset.name
   if (a === 'toSettings') { tab = 'lxsettings'; return render() }
+  if (a === 'addcat') {
+    const x = (await api.lxCatalog()).find(y => y.name === b.closest('[data-cat]').dataset.cat)
+    if (await run(() => api.lxPut({ name: x.name, repo: x.repo, branch: x.branch, build: x.build, run: x.run }))) { toast(`${x.title} added — press Launch to download and build it`); drawLx() }
+  }
   if (a === 'tools' && await run(() => api.lxInstallTools(b.dataset.ids.split(',')))) toast('Installing in a PowerShell window — press Check again when it says Done')
   if (a === 'recheck') { b.disabled = true; drawLx() }
   if (a === 'hide' && confirm(`Remove ${lxName} from the sidebar?`)) { await run(() => api.lxSave({ enabled: false })); lxOn = lxView = false; tab = 'browse'; return render() }

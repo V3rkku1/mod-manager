@@ -28,10 +28,12 @@ const TOOLS = {
   cargo: { label: 'Rust', install: 'winget install -e --id Rustlang.Rustup' },
   msvc: { label: 'C++ build tools (needed by Rust)', install: 'winget install -e --id Microsoft.VisualStudio.2022.BuildTools --override "--wait --quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"' },
   python: { label: 'Python', install: 'winget install -e --id Python.Python.3.12' },
+  cmake: { label: 'CMake', install: 'winget install -e --id Kitware.CMake' },
 }
 const needs = c => {
   const cmds = c.projects.flatMap(p => [...(p.build || []), ...(p.shaders || [])]).join('\n')
-  return ['git', ...(/\bcargo\b/.test(cmds) ? ['cargo', 'msvc'] : []), ...(/\bpython\b/.test(cmds) ? ['python'] : [])]
+  return ['git', ...(/\bcargo\b/.test(cmds) ? ['cargo'] : []), ...(/cmake/i.test(cmds) ? ['cmake'] : []), ...(/\bcargo\b|cmake/i.test(cmds) ? ['msvc'] : []),
+    ...(/\bpython\b|cmake/i.test(cmds) ? ['python'] : [])] // the HarbourMasters ports need Python too (their docs)
 }
 // Opens a PowerShell window running `text` (written to a temp .ps1).
 function console_(name, text) {
@@ -70,6 +72,37 @@ function script(c, p, steps) {
 const git = args => new Promise(ok => execFile('git', args, { windowsHide: true, timeout: 30e3, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } },
   (e, out) => ok(e?.code === 'ENOENT' ? null : (out || '').trim())))
 
+// Known recomps / native ports (+ Cemu for Breath of the Wild, which has no recomp). Build presets come from each repo's docs/BUILDING.md;
+// the ones that need game files placed by hand before building (Zelda64Recomp, UnleashedRecomp) and Cemu link to their releases instead.
+const HM = (target, exe) => ({ build: [
+  "& 'C:\\Program Files\\CMake\\bin\\cmake.exe' -S . -B build/x64 -G 'Visual Studio 17 2022' -T v143 -A x64",
+  `& 'C:\\Program Files\\CMake\\bin\\cmake.exe' --build .\\build\\x64 --target ${target} --config Release`,
+  "& 'C:\\Program Files\\CMake\\bin\\cmake.exe' --build .\\build\\x64 --config Release"],
+  // shortcut: the exe's folder under build\x64 isn't documented, so it is looked up; set a fixed path with Edit if it moves.
+  run: `Get-ChildItem .\\build\\x64 -Recurse -Filter ${exe} | Select-Object -First 1 | ForEach-Object { Set-Location $_.DirectoryName; & $_.FullName }` })
+const CATALOG = [
+  { name: 'Shipwright', title: 'Ship of Harkinian', game: 'The Legend of Zelda: Ocarina of Time', kind: 'PC port', repo: 'https://github.com/HarbourMasters/Shipwright', branch: 'develop',
+    needs: 'your own Ocarina of Time ROM (picked on first start)', ...HM('GenerateSohOtr', 'soh.exe') },
+  { name: '2ship2harkinian', title: '2 Ship 2 Harkinian', game: "The Legend of Zelda: Majora's Mask", kind: 'PC port', repo: 'https://github.com/HarbourMasters/2ship2harkinian', branch: 'develop',
+    needs: "your own Majora's Mask ROM (picked on first start)", ...HM('Generate2ShipOtr', '2ship.exe') },
+  { name: 'Starship', title: 'Starship', game: 'Star Fox 64', kind: 'PC port', repo: 'https://github.com/HarbourMasters/Starship', branch: 'main',
+    needs: 'your own Star Fox 64 ROM', ...HM('GeneratePortO2R', 'Starship.exe') },
+  { name: 'Zelda64Recomp', title: 'Zelda 64: Recompiled', game: "Majora's Mask (Ocarina of Time announced)", kind: 'Recomp', repo: 'https://github.com/Zelda64Recomp/Zelda64Recomp', branch: 'dev',
+    needs: 'your own ROM; building also needs a decompressed ROM and N64Recomp, so get the release' },
+  { name: 'UnleashedRecomp', title: 'Unleashed Recompiled', game: 'Sonic Unleashed (Xbox 360)', kind: 'Recomp', repo: 'https://github.com/hedge-dev/UnleashedRecomp', branch: 'main',
+    needs: 'your own Xbox 360 game files; get the release' },
+  { name: 'Cemu', title: 'Cemu', game: 'Breath of the Wild (Wii U emulator: no BotW recomp exists yet)', kind: 'Emulator', repo: 'https://github.com/cemu-project/Cemu', branch: 'main',
+    needs: 'your own Wii U game dump; get the release' },
+]
+const releases = {} // repo -> latest release info, fetched once per run (GitHub allows 60 unauthenticated calls an hour)
+async function latest(repo) {
+  if (repo in releases) return releases[repo]
+  const m = repo.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+?)(\.git)?$/)
+  releases[repo] = !m ? null : await fetch(`https://api.github.com/repos/${m[1]}/releases/latest`, { headers: { 'user-agent': 'mod-manager', accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(15e3) })
+    .then(r => r.ok ? r.json() : null).then(j => j && { tag: j.tag_name, date: j.published_at, url: j.html_url }).catch(() => null)
+  return releases[repo]
+}
+
 module.exports = dataDir => {
   const file = path.join(dataDir, 'launcherx.json')
   const load = () => {
@@ -88,7 +121,7 @@ module.exports = dataDir => {
     return { name, repo, branch: String(p.branch || 'main').trim() || 'main', build: lines(p.build), shaders: lines(p.shaders), run: String(p.run || '').trim() }
   }
   return {
-    script, Q, needs,
+    script, Q, needs, CATALOG,
     lxConfig: load,
     lxSave: patch => {
       const c = load()
@@ -142,6 +175,7 @@ module.exports = dataDir => {
       const want = needs(load())
       const ps = [PATH_REFRESH,
         "foreach ($t in 'git', 'cargo', 'python') { if (Get-Command $t -CommandType Application -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch 'WindowsApps' }) { $t } }",
+        "if (Test-Path 'C:\\Program Files\\CMake\\bin\\cmake.exe') { 'cmake' }",
         '$vw = "${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe"',
         "if ((Test-Path $vw) -and (& $vw -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)) { 'msvc' }"].join('\n')
       execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 60e3 }, (e, out) => {
@@ -157,6 +191,10 @@ module.exports = dataDir => {
       return console_('launcherx-tools', [...list.map(id => `Write-Host 'Installing ${TOOLS[id].label}...'; ${TOOLS[id].install} --accept-source-agreements --accept-package-agreements`),
         "Write-Host ''; Write-Host 'Done. Close this window and press Check again in Mod Manager.'"].join('\n'))
     },
+    // Known recomps with their latest release; `added` when already in the list.
+    lxCatalog: async () => { const have = new Set(load().projects.map(p => p.repo.toLowerCase()))
+      return Promise.all(CATALOG.map(async x => ({ ...x, added: have.has(x.repo.toLowerCase()), release: await latest(x.repo) }))) },
+    lxLatest: async name => { const c = load(); return latest(find(c, name).repo) },
     lxDir: name => { const c = load(); return path.join(c.root, find(c, name).name) },
   }
 }
