@@ -80,6 +80,9 @@ assert(require('./launcherx')(old).lxConfig().projects[0].run.includes('{args}')
   commit('two'); assert.equal(await LX.lxStatus('demo'), 'Update available')
   assert(job('update', 'build') === 0 && builds() === 2, 'rebuild after update')
   assert(job('build', 'force') === 0 && builds() === 3, 'force rebuild')
+  // A run command that pipes a native program's stderr (like play-foxhound.ps1 with victory.exe) must not stop at its first line.
+  p.run = "cmd /c 'echo INFO from the game 1>&2' 2>&1 | ForEach-Object { \"$_\" }; Set-Content ran2.txt ok"
+  assert.equal(job('run'), 0); assert.equal(fs.readFileSync(path.join(LX.lxDir('demo'), 'ran2.txt'), 'utf8').trim(), 'ok', 'run went on past stderr output')
   p.shaders = ["Set-Content warmed.txt '{game}'"]
   assert(job('build', 'shaders') === 0 && builds() === 3, 'shader prep without rebuild')
   assert.equal(fs.readFileSync(path.join(LX.lxDir('demo'), 'warmed.txt'), 'utf8').trim(), c.game, 'shader prep got game path')

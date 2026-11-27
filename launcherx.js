@@ -73,6 +73,9 @@ function script(c, p, steps) {
   }
   const game = cmd => cmd.replace(/\{game\}/g, String(c.game || '').replace(/'/g, "''"))
   const run = cmd => { const a = args(p); return game(cmd.includes('{args}') ? cmd.replace(/\{args\}/g, a) : a ? `${cmd} ${a}` : cmd).trim() }
+  // The game's own scripts pipe the game's log (2>&1); with 'Stop' Windows PowerShell 5.1 ends them at its first stderr line
+  // (NativeCommandError). Failures from here on are caught by X / the exit code instead.
+  if (steps.includes('shaders') || steps.includes('run')) o.push("$ErrorActionPreference = 'Continue'")
   // Shader prep: the project's own warm-up/preload commands, so the first start doesn't stutter while pipelines compile.
   if (steps.includes('shaders')) for (const cmd of p.shaders || []) o.push(`${game(cmd)}; X`)
   if (steps.includes('run') && p.run) o.push(run(p.run))
