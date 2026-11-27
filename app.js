@@ -1519,24 +1519,15 @@ async function drawLx() {
       <label><span>SHADER PREP COMMANDS <span class="muted">(optional, one per line; {game} = game exe)</span></span><textarea name="shaders" rows="2" placeholder=".\\target\\release\\victory.exe preload ([IO.Path]::GetDirectoryName('{game}'))">${esc((e.shaders || []).join('\n'))}</textarea></label>
       <label><span>RUN COMMAND <span class="muted">({game} = game exe)</span></span><input name="run" value="${esc(e.run)}" placeholder=".\\target\\release\\app.exe"></label>
       <div class="row"><button type="button" data-lx="cancel">Cancel</button><button class="primary">${ic('check')} Save project</button></div></form>`
-    : `<button type="button" data-lx="add">${ic('plus')} Add project</button>`}
-    <h4 class="lxh">MORE RECOMPS AND PORTS</h4><div id="lxCat" class="lxcat"><p class="muted">Loading…</p></div>`
+    : `<button type="button" data-lx="add">${ic('plus')} Add project</button>`}`
   if (tab === 'lxprojects') api.lxTools().then(miss => {
     if (miss.length && $('#lxTools')) $('#lxTools').innerHTML = `<div class="banner warn">${ic('wrench')}<div><b>Needed to build: ${esc(miss.map(t => t.label).join(', '))}</b>
       <p>Installs with winget (Windows' own installer) in a PowerShell window. The C++ build tools are several GB and ask for admin rights.</p></div>
       <button data-lx="recheck">Check again</button><button class="primary" data-lx="tools" data-ids="${esc(miss.map(t => t.id).join(','))}">${ic('download')} Install</button></div>`
   }, () => {})
-  if (tab === 'lxprojects') {
-    for (const el of document.querySelectorAll('#lxList .lxp')) api.lxLatest(el.dataset.name).then(r => {
-      if (r) el.querySelector('.lxrel').innerHTML = ` · <a data-href="${esc(r.url)}">Latest release ${esc(r.tag)}</a>${r.date ? ` · ${ago(Date.parse(r.date))}` : ''}`
-    }, () => {})
-    api.lxCatalog().then(list => { if ($('#lxCat')) $('#lxCat').innerHTML = list.map(x => `<div class="mod lxp lxc" data-cat="${esc(x.name)}"><div class="noicon lxicon">${initials(x.title)}</div>
-      <div class="body"><div class="top"><b>${esc(x.title)}</b><span class="tag">${esc(x.kind)}</span>${x.release ? `<span class="tag">${esc(x.release.tag)}</span>` : ''}</div>
-        <p>${esc(x.game)} · needs ${esc(x.needs)}</p><p><a data-href="${esc(x.repo)}">${esc(x.repo.replace(/^https:\/\/github\.com\//, ''))}</a></p></div>
-      <div class="actions"><button data-href="${esc(x.release?.url || x.repo + '/releases/latest')}" title="Download the ready-made release">${ic('download')} Release</button>
-        ${x.build ? (x.added ? '<span class="tag">Added</span>' : `<button class="primary" data-lx="addcat" title="Add to Projects: downloads, builds and runs it from source">${ic('plus')} Build from source</button>`) : ''}</div></div>`).join('')
-    }, () => { if ($('#lxCat')) $('#lxCat').innerHTML = '<p class="muted">Could not load the list.</p>' })
-  }
+  if (tab === 'lxprojects') for (const el of document.querySelectorAll('#lxList .lxp')) api.lxLatest(el.dataset.name).then(r => {
+    if (r) el.querySelector('.lxrel').innerHTML = ` · <a data-href="${esc(r.url)}">Latest release ${esc(r.tag)}</a>${r.date ? ` · ${ago(Date.parse(r.date))}` : ''}`
+  }, () => {})
   for (const el of document.querySelectorAll('#lxList .lxp')) api.lxStatus(el.dataset.name).then(t => {
     const tg = el.querySelector('.lxst'); tg.textContent = t; tg.classList.toggle('upd', /Update|not built/.test(t))
   }, () => {})
@@ -1550,10 +1541,6 @@ $('#lxList').addEventListener('click', async e => {
   const b = e.target.closest('[data-lx]'); if (!b) return
   const a = b.dataset.lx, name = b.closest('.lxp')?.dataset.name
   if (a === 'toSettings') { tab = 'lxsettings'; return render() }
-  if (a === 'addcat') {
-    const x = (await api.lxCatalog()).find(y => y.name === b.closest('[data-cat]').dataset.cat)
-    if (await run(() => api.lxPut({ name: x.name, repo: x.repo, branch: x.branch, build: x.build, run: x.run }))) { toast(`${x.title} added — press Launch to download and build it`); drawLx() }
-  }
   if (a === 'tools' && await run(() => api.lxInstallTools(b.dataset.ids.split(',')))) toast('Installing in a PowerShell window — press Check again when it says Done')
   if (a === 'recheck') { b.disabled = true; drawLx() }
   if (a === 'hide' && confirm(`Remove ${lxName} from the sidebar?`)) { await run(() => api.lxSave({ enabled: false })); lxOn = lxView = false; tab = 'browse'; return render() }
