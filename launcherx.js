@@ -9,9 +9,12 @@ const defaults = root => ({
     { name: 'VIctory-Belobug-AMD', repo: 'https://github.com/Belobug/VIctory-Belobug-AMD', branch: 'a-publier',
       build: ['cargo build --locked --profile diag -p victory --features diagnostics'], run: ".\\scripts\\play.ps1 -Exe '{game}'" },
     { name: 'VIctory-NVIDIA', repo: 'https://github.com/trustno1-coder/VIctory-NVIDIA', branch: 'main',
-      build: ['if (!(Test-Path victory.toml)) { Copy-Item victory.example.toml victory.toml }', '.\\Get-NVIDIA-DLSS.cmd'], run: ".\\scripts\\play-nvidia.ps1 -Exe '{game}'" },
+      build: ['if (!(Test-Path victory.toml)) { Copy-Item victory.example.toml victory.toml }', '.\\Get-NVIDIA-DLSS.cmd'], run: ".\\scripts\\play-nvidia.ps1 -Exe '{game}'",
+      // `victory preload <game folder>`: every shader + the loading pipelines, ahead of the first start (its README / play-foxhound.ps1 -Preload).
+      shaders: ['cargo build --release --locked -p victory', ".\\target\\release\\victory.exe preload ([IO.Path]::GetDirectoryName('{game}'))"] },
     { name: 'VIctory-DexNom', repo: 'https://github.com/DexNom/VIctory', branch: 'main',
-      build: ['.\\Initialize-FormatTables.ps1', 'cargo build --locked --release -p victory --features diagnostics --bins'], run: ".\\target\\release\\victory-play.exe '{game}'" },
+      build: ['.\\Initialize-FormatTables.ps1', 'cargo build --locked --release -p victory --features diagnostics --bins'], run: ".\\target\\release\\victory-play.exe '{game}'",
+      shaders: [".\\target\\release\\victory-warm.exe '{game}'"] }, // its README: "To warm the shader cache, open victory-warm.exe"
     { name: 'kelvaroq', repo: 'https://github.com/stellarr-studio/kelvaroq', branch: 'main',
       build: ['cargo build --release --locked', 'python scripts/build_native.py'], run: '.\\target\\release\\kelvaroq.exe' },
   ],
@@ -36,7 +39,10 @@ function script(c, p, steps) {
     for (const b of p.build || []) o.push(`  ${b}; X`)
     o.push(`  git rev-parse HEAD | Set-Content ${Q(mark)}`, '}')
   }
-  if (steps.includes('run') && p.run) o.push(p.run.replace(/\{game\}/g, String(c.game || '').replace(/'/g, "''")))
+  const game = cmd => cmd.replace(/\{game\}/g, String(c.game || '').replace(/'/g, "''"))
+  // Shader prep: the project's own warm-up/preload commands, so the first start doesn't stutter while pipelines compile.
+  if (steps.includes('shaders')) for (const cmd of p.shaders || []) o.push(`${game(cmd)}; X`)
+  if (steps.includes('run') && p.run) o.push(game(p.run))
   return o.join('\n')
 }
 
@@ -45,7 +51,12 @@ const git = args => new Promise(ok => execFile('git', args, { windowsHide: true,
 
 module.exports = dataDir => {
   const file = path.join(dataDir, 'launcherx.json')
-  const load = () => { try { return { ...defaults(dataDir), ...JSON.parse(fs.readFileSync(file, 'utf8')) } } catch { return defaults(dataDir) } }
+  const load = () => {
+    const d = defaults(dataDir)
+    let c; try { c = { ...d, ...JSON.parse(fs.readFileSync(file, 'utf8')) } } catch { return d }
+    for (const p of c.projects) if (!p.shaders) p.shaders = d.projects.find(x => x.name === p.name)?.shaders || [] // saved before shader prep existed
+    return c
+  }
   const save = c => (fs.mkdirSync(dataDir, { recursive: true }), fs.writeFileSync(file, JSON.stringify(c, null, 1)), c)
   const find = (c, name) => c.projects.find(p => p.name === name) || (() => { throw new Error(`No project ${name}`) })()
   const clean = p => {
@@ -53,7 +64,7 @@ module.exports = dataDir => {
     if (!NAME.test(name)) throw new Error('Project name: letters, numbers, . _ - only')
     if (!/^(https:\/\/|git@|[A-Za-z]:\\|\/)/.test(repo)) throw new Error('Repository must be a git URL')
     const lines = v => (Array.isArray(v) ? v : String(v || '').split(/\r?\n/)).map(s => s.trim()).filter(Boolean)
-    return { name, repo, branch: String(p.branch || 'main').trim() || 'main', build: lines(p.build), run: String(p.run || '').trim() }
+    return { name, repo, branch: String(p.branch || 'main').trim() || 'main', build: lines(p.build), shaders: lines(p.shaders), run: String(p.run || '').trim() }
   }
   return {
     script, Q,
@@ -94,11 +105,13 @@ module.exports = dataDir => {
     lxRun: (name, steps) => {
       if (process.platform !== 'win32') throw new Error('Launcher-X projects run on Windows')
       const c = load(), p = find(c, name)
+      const needsGame = steps === 'launch' ? (p.run || '').includes('{game}') : steps.includes?.('shaders') && (p.shaders || []).some(x => x.includes('{game}'))
+      if (needsGame && !fs.existsSync(c.game)) throw new Error('Pick the game exe first (Game box above)')
+      if (steps.includes?.('shaders') && !p.shaders?.length) throw new Error(`${p.name} has no shader prep commands. Add them with Edit.`)
       if (steps === 'launch') {
-        if ((p.run || '').includes('{game}') && !fs.existsSync(c.game)) throw new Error('Pick the game exe first (Game box above)')
         steps = c.autoUpdate ? ['update', 'build', 'run'] : ['build', 'run']
       }
-      if (!Array.isArray(steps) || !steps.every(s => ['update', 'build', 'force', 'run'].includes(s))) throw new Error('Bad steps')
+      if (!Array.isArray(steps) || !steps.every(s => ['update', 'build', 'force', 'shaders', 'run'].includes(s))) throw new Error('Bad steps')
       const f = path.join(os.tmpdir(), `launcherx-${p.name}.ps1`)
       fs.writeFileSync(f, '﻿' + script(c, p, steps)) // BOM: PowerShell 5.1 reads BOM-less files as ANSI
       spawn('cmd.exe', ['/c', 'start', '""', 'powershell', '-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', f], { detached: true, stdio: 'ignore', windowsHide: true }).unref()

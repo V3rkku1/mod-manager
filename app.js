@@ -1459,13 +1459,14 @@ async function drawLx() {
     <label class="check"><input type="checkbox" id="lxAuto" class="switch" ${c.autoUpdate ? 'checked' : ''}> Pull updates before Launch</label>
     <div class="lxlist">${c.projects.map(p => `<div class="lxp" data-name="${esc(p.name)}"><div><b>${esc(p.name)}</b><small class="muted">${esc(p.repo)} · ${esc(p.branch)}</small><small class="lxst muted">Checking…</small></div>
       <div class="row"><button type="button" class="primary" data-lx="launch">${ic('play')} Launch</button><button type="button" data-lx="update">${ic('refresh')} Update + Build</button>
-      <button type="button" data-lx="rebuild">${ic('wrench')} Rebuild</button><button type="button" class="icon" data-lx="folder" title="Open folder">${ic('folder')}</button>
+      <button type="button" data-lx="rebuild">${ic('wrench')} Rebuild</button>${p.shaders?.length ? `<button type="button" data-lx="shaders" title="Build if needed, then compile the game's shaders ahead so the first start doesn't stutter">${ic('flame')} Prepare shaders</button>` : ''}<button type="button" class="icon" data-lx="folder" title="Open folder">${ic('folder')}</button>
       <button type="button" class="icon" data-lx="edit" title="Edit">${ic('pencil')}</button><button type="button" class="icon danger" data-lx="remove" title="Remove">${ic('trash')}</button></div></div>`).join('')
       || '<p class="muted">No projects. Add one below.</p>'}</div>
     ${e ? `<form id="lxForm" class="lxform"><h3>${e.name ? 'Edit ' + esc(e.name) : 'Add project'}</h3>
       <div class="row"><label>NAME<input name="name" value="${esc(e.name)}" required></label><label>BRANCH<input name="branch" value="${esc(e.branch)}"></label></div>
       <label>GITHUB REPOSITORY<input name="repo" value="${esc(e.repo)}" placeholder="https://github.com/owner/repo" required></label>
       <label><span>BUILD COMMANDS <span class="muted">(one per line, PowerShell)</span></span><textarea name="build" rows="3" placeholder="cargo build --release --locked">${esc(e.build.join('\n'))}</textarea></label>
+      <label><span>SHADER PREP COMMANDS <span class="muted">(optional, one per line; {game} = game exe)</span></span><textarea name="shaders" rows="2" placeholder=".\\target\\release\\victory.exe preload ([IO.Path]::GetDirectoryName('{game}'))">${esc((e.shaders || []).join('\n'))}</textarea></label>
       <label><span>RUN COMMAND <span class="muted">({game} = game exe)</span></span><input name="run" value="${esc(e.run)}" placeholder=".\\target\\release\\app.exe"></label>
       <div class="row"><button type="button" data-lx="cancel">Cancel</button><button class="primary">${ic('check')} Save project</button></div></form>`
     : `<button type="button" data-lx="add">${ic('plus')} Add project</button>`}`
@@ -1481,8 +1482,9 @@ $('#lxDlg').addEventListener('click', async e => {
   const a = b.dataset.lx, name = b.closest('.lxp')?.dataset.name
   if (a === 'pickRoot') { const d = await api.pickFolder(); if (d) await run(() => api.lxSave({ root: d })), drawLx() }
   if (a === 'pickGame') { const f = await api.openFile(['exe']); if (f) await run(() => api.lxSave({ game: f })), drawLx() }
-  if (a === 'launch' || a === 'update' || a === 'rebuild') {
-    if (await run(() => api.lxRun(name, a === 'launch' ? 'launch' : a === 'update' ? ['update', 'build'] : ['build', 'force']))) toast(`${name}: running in a PowerShell window`)
+  if (a === 'launch' || a === 'update' || a === 'rebuild' || a === 'shaders') {
+    const steps = { launch: 'launch', update: ['update', 'build'], rebuild: ['build', 'force'], shaders: ['build', 'shaders'] }[a]
+    if (await run(() => api.lxRun(name, steps))) toast(a === 'shaders' ? `${name}: preparing shaders in a PowerShell window (can take several minutes)` : `${name}: running in a PowerShell window`)
   }
   if (a === 'folder') api.openFolder(await api.lxDir(name))
   if (a === 'edit' || a === 'add') { lxEdit = a === 'add' ? '' : name; drawLx() }
