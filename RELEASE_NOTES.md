@@ -1,25 +1,19 @@
-## What's new in 0.17.0
+## What's new in 0.18.0
 
-### GTA 6 (Launcher-X built in)
-- New GTA 6 page in the left bar: your recomp projects listed like mods, with Launch, pull + build, rebuild, and status.
-- Prepare shaders: compiles the game's shaders ahead (VIctory-NVIDIA preload, VIctory-DexNom warm-up) so the first start doesn't stutter.
-- Settings for the game exe, projects folder and auto-update.
+### Recomps (GTA 6)
+- Recomps are optional now: add them with **+ → Recomps** (named GTA 6 by default). Remove from the sidebar in its Settings.
+- Builds show their log on the page, with Stop and the failing line when a build breaks. Only the game opens in a PowerShell window.
+- Play bar: pick a project and press Play; it remembers the last one.
+- Play options per project: DLSS, resolution, frame generation and Series S for VIctory-NVIDIA; ray tracing, upscaling and console profile for VIctory-DexNom; extra arguments for any project.
+- Disk use per project and Clean build files.
+- New commits on GitHub are shown per project, with a notification every 3 hours.
+- Missing Rust, Git, C++ build tools or Python? Install them from the page with winget.
+- Each project links to its GitHub page and latest release.
 
-### Playing Minecraft
-- Pick your launcher: official Minecraft Launcher (default), Prism Launcher, MultiMC, or your own command.
-- Play shows download progress and can be cancelled; repeat launches start without network.
-- Play turns into Stop while the game runs, also for games started by the official launcher.
-- Playtime and last played for every profile.
-- Save servers in Worlds and join them in one click.
-- Warning before Play about missing required mods, incompatible mods or the same mod twice.
-
-### Mods and sharing
-- Imported .mrpack modpacks show each mod separately. Fixed: Open .mrpack did nothing.
-- Installed tab: filter by name, enabled, disabled or has update.
-- New profiles can start with Performance or Vanilla+ mods.
-- Live share: changes reach friends automatically, only the owner can change a shared pack, Sync before Play.
-- Pack website: friends' packs and one-click install.
+### Minecraft
+- Crash help after any launcher (official, Prism, your own command), with Disable all & retry.
+- Update all shows every changelog first.
+- World backups: back up, restore, and optionally back up before every Play.
 
 ### App
-- Update bar shows download progress, Restart to update, and What's new. Settings > App > Check for updates.
-- UI fixes for small windows.
+- App updates setting: automatic, ask before downloading, or only when you check.
