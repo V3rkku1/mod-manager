@@ -29,12 +29,19 @@ module.exports = base => {
   const verJson = id => path.join(dirs.ver, id, `${id}.json`)
   let manifest
 
-  async function download(url, file, hash, force) {
-    if (fs.existsSync(file) && !(force && hash && sha1(file) !== hash)) return
-    const data = await bytes(url)
-    if (hash && crypto.createHash('sha1').update(data).digest('hex') !== hash) throw new Error(`Checksum mismatch: ${path.basename(file)}`)
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file + '.part', data); fs.renameSync(file + '.part', file)
+  const inflight = new Map()
+  function download(url, file, hash, force, size) {
+    if (fs.existsSync(file) && !(size && fs.statSync(file).size !== size) && !(force && hash && sha1(file) !== hash)) return
+    if (inflight.has(file)) return inflight.get(file)
+    const job = (async () => {
+      const data = await bytes(url)
+      if (hash && crypto.createHash('sha1').update(data).digest('hex') !== hash) throw new Error(`Checksum mismatch: ${path.basename(file)}`)
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      const part = `${file}.${process.pid}-${crypto.randomBytes(4).toString('hex')}.part`
+      fs.writeFileSync(part, data); fs.renameSync(part, file)
+    })().finally(() => inflight.delete(file))
+    inflight.set(file, job)
+    return job
   }
 
   const versions = async () => (manifest ??= await json(MANIFEST)).versions
@@ -53,7 +60,7 @@ module.exports = base => {
   async function latestLoader(mc, loader) {
     if (loader === 'fabric' || loader === 'quilt') {
       const meta = loader === 'fabric' ? 'https://meta.fabricmc.net/v2' : 'https://meta.quiltmc.org/v3'
-      return (await json(`${meta}/versions/loader/${mc}`)).map(l => l.loader).find(l => l.stable !== false)?.version
+      return (await json(`${meta}/versions/loader/${mc}`)).map(l => l.loader).find(l => l.stable !== false && !/beta|pre|rc/i.test(l.version))?.version
     }
     if (loader === 'forge') return (p => p[`${mc}-recommended`] || p[`${mc}-latest`])((await json('https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json')).promos)
     if (loader === 'neoforge') {
@@ -106,7 +113,9 @@ module.exports = base => {
     if (!v.inheritsFrom) return v
     const parent = await resolve(await vanilla(v.inheritsFrom))
     const key = l => l.name.split(':').slice(0, 2).concat(l.name.split(':')[3] || []).join(':')
-    const seen = new Set(), libraries = [...v.libraries, ...parent.libraries].filter(l => !seen.has(key(l)) && seen.add(key(l)))
+    // Loader libraries replace the parent's same library (other version); the parent's own list is kept as is, since it
+    // holds per-OS variants (e.g. LWJGL 3.2.1 for macOS + 3.2.2 for others) and separate natives entries.
+    const mine = new Set(v.libraries.filter(l => !l.natives).map(key)), libraries = [...v.libraries, ...parent.libraries.filter(l => l.natives || !mine.has(key(l)))]
     return { ...parent, ...v, libraries, jar: parent.jar || parent.id,
       arguments: v.arguments || parent.arguments ? { game: [...parent.arguments?.game || [], ...v.arguments?.game || []], jvm: [...parent.arguments?.jvm || [], ...v.arguments?.jvm || []] } : undefined,
       minecraftArguments: v.minecraftArguments || parent.minecraftArguments }
@@ -123,7 +132,7 @@ module.exports = base => {
     let done = 0
     await pool(files, 16, async ([rel, f]) => {
       const file = path.join(dir, rel)
-      await download(f.downloads.raw.url, file, f.downloads.raw.sha1, force)
+      await download(f.downloads.raw.url, file, f.downloads.raw.sha1, force, f.downloads.raw.size)
       if (f.executable && process.platform !== 'win32') fs.chmodSync(file, 0o755)
       progress?.(`Java ${++done}/${files.length}`)
     })
@@ -143,27 +152,28 @@ module.exports = base => {
       if (a || !l.downloads) {
         const rel = a?.path || mavenPath(l.name), file = path.join(dirs.lib, rel)
         const url = a ? a.url : (l.url || 'https://libraries.minecraft.net/').replace(/\/?$/, '/') + rel
-        if (url) jobs.push([url, file, a?.sha1])
+        if (url) jobs.push([url, file, a?.sha1, a?.size])
         if (l.name.includes(':natives-')) natives.push(file)
         if (!classpath.includes(file)) classpath.push(file)
       }
       const cls = l.natives?.[OS]?.replace('${arch}', ARCH === 'x64' ? '64' : '32'), n = cls && l.downloads?.classifiers?.[cls]
-      if (n) jobs.push([n.url, path.join(dirs.lib, n.path), n.sha1]), natives.push(path.join(dirs.lib, n.path))
+      if (n) jobs.push([n.url, path.join(dirs.lib, n.path), n.sha1, n.size]), natives.push(path.join(dirs.lib, n.path))
     }
     const vanillaJar = path.join(dirs.ver, v.jar || v.id, `${v.jar || v.id}.jar`)
-    jobs.push([v.downloads.client.url, vanillaJar, v.downloads.client.sha1])
+    jobs.push([v.downloads.client.url, vanillaJar, v.downloads.client.sha1, v.downloads.client.size])
     const index = await json(v.assetIndex.url)
     fs.mkdirSync(path.join(dirs.assets, 'indexes'), { recursive: true })
     fs.writeFileSync(path.join(dirs.assets, 'indexes', `${v.assetIndex.id}.json`), JSON.stringify(index))
-    for (const { hash } of Object.values(index.objects))
-      jobs.push([`https://resources.download.minecraft.net/${hash.slice(0, 2)}/${hash}`, path.join(dirs.assets, 'objects', hash.slice(0, 2), hash), hash])
+    for (const { hash, size } of Object.values(index.objects))
+      jobs.push([`https://resources.download.minecraft.net/${hash.slice(0, 2)}/${hash}`, path.join(dirs.assets, 'objects', hash.slice(0, 2), hash), hash, size])
     let done = 0
-    await pool(jobs.filter(j => j[0]), 24, async ([url, file, hash]) => { await download(url, file, hash, force); if (++done % 50 === 0) progress?.(`Game files ${done}/${jobs.length}`) })
+    await pool(jobs.filter(j => j[0]), 24, async ([url, file, hash, size]) => { await download(url, file, hash, force, size); if (++done % 50 === 0) progress?.(`Game files ${done}/${jobs.length}`) })
     // Forge expects versions/<id>/<id>.jar to be the client jar.
     const jar = path.join(dirs.ver, inst.id, `${inst.id}.jar`)
     if (!fs.existsSync(jar)) fs.copyFileSync(vanillaJar, jar)
-    fs.rmSync(nativesDir, { recursive: true, force: true })
-    for (const f of natives) for (const [name, data] of Object.entries(unzipSync(fs.readFileSync(f))))
+    const fresh = force || !fs.existsSync(nativesDir)
+    if (force) try { fs.rmSync(nativesDir, { recursive: true, force: true }) } catch {} // in use by a running game: keep it
+    if (fresh) for (const f of natives) for (const [name, data] of Object.entries(unzipSync(fs.readFileSync(f))))
       if (!name.startsWith('META-INF') && !name.endsWith('/') && /\.(dll|so|dylib|jnilib)$/.test(name)) {
         fs.mkdirSync(nativesDir, { recursive: true }); fs.writeFileSync(path.join(nativesDir, path.basename(name)), data)
       }

@@ -1202,19 +1202,22 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     filters: async (pid, src, kind) => S[src].filters ? S[src].filters(load(pid), kind) : {},
     running: () => Object.keys(running),
     getLog: pid => logs[pid] || [],
-    stop: pid => { if (running[pid]) running[pid].stopped = true, running[pid].child.kill(); return true },
+    stop: pid => { if (running[pid]) running[pid].stopped = true, running[pid].child?.kill(); return true },
 
     // Prepare (download game, loader, Java), deploy mods into the instance folder and start Minecraft.
     play: async (pid, quickPlay = {}, { vanilla } = {}) => {
       if (running[pid]) throw new Error('Already running')
       let p = load(pid)
       if (p.type !== 'modrinth') throw new Error('Only Minecraft profiles launch from here')
+      const me = running[pid] = { preparing: true } // claims the profile now so a second Play click can't start a second game
+      try {
       const acct = await activeAccount()
       const status = text => emit('status', { pid, text })
       const log = line => { (logs[pid] ||= []).push(line); if (logs[pid].length > 5000) logs[pid].shift(); emit('log', { pid, line }) }
       logs[pid] = []
       status('Preparing…')
       const plan = await mcl.prepare({ mc: p.mc.version, loader: p.mc.loader, loaderVersion: p.mc.loaderVersion, log, progress: status })
+      if (me.stopped) throw new Error('Stopped')
       p = await serialDeploy(pid, { vanilla })
       if (plan.loaderVersion && plan.loaderVersion !== p.mc.loaderVersion) p.mc.loaderVersion = plan.loaderVersion, save(p)
       const opts = { ...settings().launch, ...p.launch }
@@ -1226,9 +1229,11 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
           const q = load(pid); q.playtime = (q.playtime || 0) + Math.round((Date.now() - start) / 1000); q.lastPlayed = Date.now(); save(q)
           emit('status', { pid, text: null, exit: stopped ? 0 : code })
         } })
-      running[pid] = { child }
+      me.child = child; me.preparing = false
+      if (me.stopped) child.kill()
       status('Running')
       return true
+      } catch (e) { if (running[pid] === me && !me.child) delete running[pid], emit('status', { pid, text: null }); throw e }
     },
     repair: async pid => {
       const p = load(pid)
