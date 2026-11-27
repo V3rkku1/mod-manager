@@ -9,11 +9,19 @@ const defaults = root => ({
     { name: 'VIctory-Belobug-AMD', repo: 'https://github.com/Belobug/VIctory-Belobug-AMD', branch: 'a-publier',
       build: ['cargo build --locked --profile diag -p victory --features diagnostics'], run: ".\\scripts\\play.ps1 -Exe '{game}'" },
     { name: 'VIctory-NVIDIA', repo: 'https://github.com/trustno1-coder/VIctory-NVIDIA', branch: 'main',
-      build: ['if (!(Test-Path victory.toml)) { Copy-Item victory.example.toml victory.toml }', '.\\Get-NVIDIA-DLSS.cmd'], run: ".\\scripts\\play-nvidia.ps1 -Exe '{game}'",
+      build: ['if (!(Test-Path victory.toml)) { Copy-Item victory.example.toml victory.toml }', '.\\Get-NVIDIA-DLSS.cmd'], run: ".\\scripts\\play-nvidia.ps1 -Exe '{game}' {args}",
+      // play-foxhound.ps1's parameters
+      options: [{ id: 'dlss', label: 'DLSS', flag: '-Dlss', choices: [['', 'Default (quality)'], ['quality', 'Quality'], ['balanced', 'Balanced'], ['performance', 'Performance'], ['dlaa', 'DLAA'], ['off', 'Off']] },
+        { id: 'res', label: 'Resolution', flag: '-Res', choices: [['', 'Default (1440p)'], ['1440', '1440p'], ['1080to1440', '1080p to 1440p'], ['4k', '4K']] },
+        { id: 'fg', label: 'Frame generation', flag: '-FrameGen' }, { id: 'seriess', label: 'Series S profile (faster, softer)', flag: '-SeriesS' }],
       // `victory preload <game folder>`: every shader + the loading pipelines, ahead of the first start (its README / play-foxhound.ps1 -Preload).
       shaders: ['cargo build --release --locked -p victory', ".\\target\\release\\victory.exe preload ([IO.Path]::GetDirectoryName('{game}'))"] },
     { name: 'VIctory-DexNom', repo: 'https://github.com/DexNom/VIctory', branch: 'main',
-      build: ['.\\Initialize-FormatTables.ps1', 'cargo build --locked --release -p victory --features diagnostics --bins'], run: ".\\target\\release\\victory-play.exe '{game}'",
+      build: ['.\\Initialize-FormatTables.ps1', 'cargo build --locked --release -p victory --features diagnostics --bins'], run: ".\\target\\release\\victory-play.exe {args} '{game}'",
+      // victory-play's launcher options (they go before the game path)
+      options: [{ id: 'rt', label: 'Ray tracing', choices: [['', 'Default'], ['--rt', 'On'], ['--no-rt', 'Off']] },
+        { id: 'up', label: 'Upscaling', choices: [['', 'Default'], ['--fsr-quality', 'FSR Quality'], ['--fsr-balanced', 'FSR Balanced'], ['--fsr-performance', 'FSR Performance'], ['--native-1440p', 'Native 1440p'], ['--1080p-to-1440p', '1080p to 1440p']] },
+        { id: 'console', label: 'Console profile', flag: '--console', choices: [['', 'Default'], ['series-x', 'Series X'], ['series-s', 'Series S']] }],
       shaders: [".\\target\\release\\victory-warm.exe '{game}'"] }, // its README: "To warm the shader cache, open victory-warm.exe"
     { name: 'kelvaroq', repo: 'https://github.com/stellarr-studio/kelvaroq', branch: 'main',
       build: ['cargo build --release --locked', 'python scripts/build_native.py'], run: '.\\target\\release\\kelvaroq.exe' },
@@ -40,6 +48,9 @@ function console_(name, text) {
   spawn('cmd.exe', ['/c', 'start', '""', 'powershell', '-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', f], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
   return true
 }
+// Play options -> command-line arguments (values only from the fixed choices; `extra` is the user's own text).
+const args = p => [...(p.options || []).map(o => { const v = p.opts?.[o.id]; return o.choices ? (v && o.choices.some(([c]) => c === v) ? (o.flag ? `${o.flag} ${v}` : v) : '') : v ? o.flag : '' }),
+  p.extra || ''].filter(Boolean).join(' ')
 const Q = s => "'" + String(s ?? '').replace(/'/g, "''") + "'"
 const NAME = /^[\w.-]{1,80}$/
 
@@ -61,9 +72,10 @@ function script(c, p, steps) {
     o.push(`  git rev-parse HEAD | Set-Content ${Q(mark)}`, '}')
   }
   const game = cmd => cmd.replace(/\{game\}/g, String(c.game || '').replace(/'/g, "''"))
+  const run = cmd => { const a = args(p); return game(cmd.includes('{args}') ? cmd.replace(/\{args\}/g, a) : a ? `${cmd} ${a}` : cmd).trim() }
   // Shader prep: the project's own warm-up/preload commands, so the first start doesn't stutter while pipelines compile.
   if (steps.includes('shaders')) for (const cmd of p.shaders || []) o.push(`${game(cmd)}; X`)
-  if (steps.includes('run') && p.run) o.push(game(p.run))
+  if (steps.includes('run') && p.run) o.push(run(p.run))
   return o.join('\n')
 }
 
@@ -79,12 +91,28 @@ async function latest(repo) {
   return releases[repo]
 }
 
-module.exports = dataDir => {
+// Size of a folder in bytes (symlinks not followed).
+async function du(dir) {
+  let n = 0
+  for (const e of await fs.promises.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    const f = path.join(dir, e.name)
+    n += e.isDirectory() ? await du(f) : e.isFile() ? (await fs.promises.stat(f).catch(() => ({ size: 0 }))).size : 0
+  }
+  return n
+}
+const SHELL = process.platform === 'win32' ? 'powershell' : 'pwsh' // pwsh only for tests off Windows
+
+module.exports = (dataDir, emit = () => {}) => {
+  const jobs = {} // name -> { child, lines }
   const file = path.join(dataDir, 'launcherx.json')
   const load = () => {
     const d = defaults(dataDir)
     let c; try { c = { ...d, ...JSON.parse(fs.readFileSync(file, 'utf8')) } } catch { return d }
-    for (const p of c.projects) if (!p.shaders) p.shaders = d.projects.find(x => x.name === p.name)?.shaders || [] // saved before shader prep existed
+    for (const p of c.projects) { // saved before these existed: take them from the defaults
+      const dp = d.projects.find(x => x.name === p.name)
+      if (!p.shaders) p.shaders = dp?.shaders || []
+      if (dp?.options && !p.options) { p.options = dp.options; if (p.run === dp.run.replace(/ ?\{args\}/, '')) p.run = dp.run }
+    }
     return c
   }
   const save = c => (fs.mkdirSync(dataDir, { recursive: true }), fs.writeFileSync(file, JSON.stringify(c, null, 1)), c)
@@ -94,10 +122,33 @@ module.exports = dataDir => {
     if (!NAME.test(name)) throw new Error('Project name: letters, numbers, . _ - only')
     if (!/^(https:\/\/|git@|[A-Za-z]:\\|\/)/.test(repo)) throw new Error('Repository must be a git URL')
     const lines = v => (Array.isArray(v) ? v : String(v || '').split(/\r?\n/)).map(s => s.trim()).filter(Boolean)
-    return { name, repo, branch: String(p.branch || 'main').trim() || 'main', build: lines(p.build), shaders: lines(p.shaders), run: String(p.run || '').trim() }
+    return { name, repo, branch: String(p.branch || 'main').trim() || 'main', build: lines(p.build), shaders: lines(p.shaders), run: String(p.run || '').trim(),
+      ...(p.options ? { options: p.options, opts: p.opts, extra: p.extra } : {}) }
+  }
+  // Runs steps without a window, the output streamed to the page (lxlog events) and kept in logs/<name>.log.
+  // Resolves { code, error } where error is the line that explains a failure.
+  function job(c, p, steps) {
+    if (jobs[p.name]?.child) throw new Error(`${p.name} is already busy`)
+    const f = path.join(os.tmpdir(), `launcherx-${p.name}-job.ps1`), logDir = path.join(dataDir, 'logs')
+    fs.writeFileSync(f, '\ufeff' + script(c, p, steps)); fs.mkdirSync(logDir, { recursive: true })
+    const log = fs.createWriteStream(path.join(logDir, `launcherx-${p.name}.log`))
+    const child = spawn(SHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', f], { cwd: os.tmpdir(), windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
+    const j = jobs[p.name] = { child, lines: [], steps }
+    emit('lxjob', { name: p.name, busy: true, steps })
+    let rest = ''
+    const add = d => { rest += d; const ls = rest.split(/\r?\n/); rest = ls.pop(); for (const line of ls) { j.lines.push(line); if (j.lines.length > 2000) j.lines.shift(); log.write(line + '\n'); emit('lxlog', { name: p.name, line }) } }
+    child.stdout.on('data', add); child.stderr.on('data', add)
+    return new Promise(ok => {
+      const done = code => {
+        if (rest) add('\n'); log.end(); j.child = null
+        const error = code ? [...j.lines].reverse().find(l => /Step failed|error(\[\w+\])?:|fatal:|not recognized|cannot find/i.test(l)) || `Exit code ${code}` : null
+        emit('lxjob', { name: p.name, busy: false, code, error, stopped: j.stopped }); ok({ code, error })
+      }
+      child.on('error', e => { add(e.message + '\n'); done(1) }); child.on('exit', c2 => done(c2 ?? 1))
+    })
   }
   return {
-    script, Q, needs,
+    script, Q, needs, args,
     lxConfig: load,
     lxSave: patch => {
       const c = load()
@@ -132,18 +183,48 @@ module.exports = dataDir => {
       const built = fs.existsSync(dir + '.built') ? fs.readFileSync(dir + '.built', 'utf8').trim() : ''
       return built === head ? s : s + ', not built'
     },
-    // Launch = update (if auto-update) + build if changed + run. Opens its own PowerShell console like Launcher-X.
-    lxRun: (name, steps) => {
+    // Launch = update (if auto-update) + build if changed, shown on the page, then the game in its own PowerShell window
+    // (the play scripts can ask questions there). Other steps run on the page only.
+    lxRun: async (name, steps) => {
       if (process.platform !== 'win32') throw new Error('Launcher-X projects run on Windows')
       const c = load(), p = find(c, name)
       const needsGame = steps === 'launch' ? (p.run || '').includes('{game}') : steps.includes?.('shaders') && (p.shaders || []).some(x => x.includes('{game}'))
       if (needsGame && !fs.existsSync(c.game)) throw new Error('Pick the game exe first (Game box above)')
       if (steps.includes?.('shaders') && !p.shaders?.length) throw new Error(`${p.name} has no shader prep commands. Add them with Edit.`)
       if (steps === 'launch') {
-        steps = c.autoUpdate ? ['update', 'build', 'run'] : ['build', 'run']
+        save({ ...c, last: p.name })
+        const r = await job(c, p, c.autoUpdate ? ['update', 'build'] : ['build'])
+        if (r.code) throw new Error(jobs[p.name].stopped ? 'Stopped' : `${p.name}: build failed. ${r.error}`)
+        return console_(`launcherx-${p.name}`, script(c, p, ['run']))
       }
-      if (!Array.isArray(steps) || !steps.every(s => ['update', 'build', 'force', 'shaders', 'run'].includes(s))) throw new Error('Bad steps')
-      return console_(`launcherx-${p.name}`, script(c, p, steps))
+      if (!Array.isArray(steps) || !steps.every(s => ['update', 'build', 'force', 'shaders'].includes(s))) throw new Error('Bad steps')
+      const r = await job(c, p, steps)
+      if (r.code) throw new Error(jobs[p.name].stopped ? 'Stopped' : `${p.name}: ${r.error}`)
+      return true
+    },
+    lxStop: name => { const j = jobs[name]; if (j?.child) { j.stopped = true; process.platform === 'win32' ? spawn('taskkill', ['/pid', String(j.child.pid), '/T', '/F'], { windowsHide: true }) : j.child.kill() } return true },
+    lxLog: name => ({ lines: jobs[name]?.lines || [], busy: !!jobs[name]?.child }),
+    lxSetOpts: (name, opts, extra) => {
+      const c = load(), p = find(c, name)
+      p.opts = Object.fromEntries((p.options || []).map(o => [o.id, o.choices ? String(opts?.[o.id] || '') : !!opts?.[o.id]]))
+      p.extra = String(extra || '').trim().slice(0, 300)
+      return save(c)
+    },
+    // Disk use: the whole folder and the build output (target\ for Rust, build\ for CMake) that Clean removes.
+    lxSize: async name => { const dir = path.join(load().root, name); return { total: await du(dir), build: (await du(path.join(dir, 'target'))) + (await du(path.join(dir, 'build'))) } },
+    lxClean: async name => {
+      const c = load(), dir = path.join(c.root, find(c, name).name)
+      if (jobs[name]?.child) throw new Error(`${name} is busy`)
+      for (const d of ['target', 'build']) await fs.promises.rm(path.join(dir, d), { recursive: true, force: true }) // async: can be tens of GB
+      fs.rmSync(dir + '.built', { force: true }) // next Launch builds again
+      return true
+    },
+    // Commits on GitHub that this copy doesn't have yet (fetch, nothing changes in the working copy).
+    lxCommits: async name => {
+      const c = load(), p = find(c, name), dir = path.join(c.root, p.name)
+      if (!fs.existsSync(path.join(dir, '.git')) || await git(['-C', dir, 'fetch', '--quiet', 'origin', p.branch]) === null) return []
+      return ((await git(['-C', dir, 'log', '--format=%h%x09%s%x09%cr', '-n', '30', 'HEAD..FETCH_HEAD'])) || '').split('\n').filter(Boolean)
+        .map(l => { const [hash, subject, when] = l.split('\t'); return { hash, subject, when } })
     },
     // Missing tools for the listed projects: [{ id, label }]. Windows only (the projects build there).
     lxTools: () => new Promise(ok => {

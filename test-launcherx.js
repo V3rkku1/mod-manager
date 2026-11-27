@@ -30,7 +30,34 @@ assert.throws(() => LX.lxPut({ name: 'kelvaroq', repo: 'https://github.com/a/b' 
 assert.throws(() => LX.lxPut({ name: '../evil', repo: 'https://github.com/a/b' }), /Project name/)
 LX.lxRemove('demo2'); assert.equal(LX.lxConfig().projects.length, 4)
 
+// Play options: fixed choices become arguments in the right place; unknown values are dropped.
+LX.lxSetOpts('VIctory-NVIDIA', { dlss: 'balanced', fg: true, res: 'bad' }, '-More x')
+LX.lxSetOpts('VIctory-DexNom', { rt: '--no-rt', console: 'series-s' })
+const cfg = { ...LX.lxConfig(), game: 'D:\\G.exe' }, run1 = n => LX.script(cfg, cfg.projects.find(x => x.name === n), ['run']).split('\n').pop()
+assert.equal(run1('VIctory-NVIDIA'), ".\\scripts\\play-nvidia.ps1 -Exe 'D:\\G.exe' -Dlss balanced -FrameGen -More x")
+assert.equal(run1('VIctory-DexNom'), ".\\target\\release\\victory-play.exe --no-rt --console series-s 'D:\\G.exe'", 'options before the game path')
+assert.equal(run1('kelvaroq'), '.\\target\\release\\kelvaroq.exe')
+// A config saved before options existed gets them, and the old run command gains {args}.
+const old = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lxo')))
+fs.writeFileSync(path.join(old, 'launcherx.json'), JSON.stringify({ projects: [{ name: 'VIctory-DexNom', repo: 'https://github.com/DexNom/VIctory', branch: 'main', build: [], run: ".\\target\\release\\victory-play.exe '{game}'" }] }))
+assert(require('./launcherx')(old).lxConfig().projects[0].run.includes('{args}'), 'run command migrated')
+
 ;(async () => {
+  // Disk use and Clean: build output goes, sources stay, next Launch rebuilds.
+  const kd = path.join(LX.lxConfig().root, 'kelvaroq')
+  fs.mkdirSync(path.join(kd, 'target'), { recursive: true }); fs.writeFileSync(path.join(kd, 'target', 'big'), Buffer.alloc(1000)); fs.writeFileSync(path.join(kd, 'src.rs'), 'x'); fs.writeFileSync(kd + '.built', 'h')
+  assert.deepEqual(await LX.lxSize('kelvaroq'), { total: 1001, build: 1000 })
+  await LX.lxClean('kelvaroq'); assert(!fs.existsSync(path.join(kd, 'target')) && fs.existsSync(path.join(kd, 'src.rs')) && !fs.existsSync(kd + '.built'), 'clean')
+
+  // New commits on the remote, without touching the working copy (git only).
+  const g = (cwd, ...a2) => spawnSync('git', a2, { cwd, encoding: 'utf8' })
+  const up = path.join(tmp, 'up'); fs.mkdirSync(up); g(up, 'init', '-q', '-b', 'main'); g(up, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'one')
+  LX.lxPut({ name: 'cm', repo: up, build: '', run: '' }); g(tmp, 'clone', '-q', up, path.join(LX.lxConfig().root, 'cm'))
+  assert.deepEqual(await LX.lxCommits('cm'), [])
+  g(up, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'Faster shaders')
+  const nc = await LX.lxCommits('cm'); assert(nc.length === 1 && nc[0].subject === 'Faster shaders', 'new commit listed')
+  LX.lxRemove('cm', true)
+
   const shell = ['powershell', 'pwsh'].find(s => !spawnSync(s, ['-NoProfile', '-Command', 'exit 0']).error)
   if (!shell) return console.log('ok launcherx (unit; no PowerShell here, end-to-end runs on Windows CI)')
   const sh = (exe, cwd, ...args) => { const r = spawnSync(exe, args, { cwd, encoding: 'utf8' }); if (r.status) console.log(`[${exe} exit ${r.status}] ${r.stdout}${r.stderr}`.trim()); return r.status }
@@ -58,6 +85,15 @@ LX.lxRemove('demo2'); assert.equal(LX.lxConfig().projects.length, 4)
   p.build = ['git not-a-command']; commit('three')
   assert.notEqual(job('update', 'build'), 0, 'failed build exits non-zero')
   assert.equal(await LX.lxStatus('demo'), 'Up to date, not built')
+  // Hidden job (what Update + Build / Rebuild / Launch's build run as): output reaches the page, failures say why.
+  if (process.platform === 'win32') {
+    const ev = [], LX2 = require('./launcherx')(tmp, (e, d) => ev.push([e, d]))
+    p.build = [`Add-Content ${LX.Q(count)} x`, "Write-Host 'hello from build'"]; LX.lxPut(p, 'demo')
+    assert.equal(await LX2.lxRun('demo', ['build', 'force']), true)
+    assert(ev.some(([e, d]) => e === 'lxlog' && d.line.includes('hello from build')) && ev.at(-1)[1].busy === false, 'log streamed')
+    LX.lxPut({ ...p, build: ['git not-a-command'] }, 'demo')
+    await assert.rejects(LX2.lxRun('demo', ['build', 'force']), /Step failed|not-a-command/)
+  }
   LX.lxRemove('demo', true); assert(!fs.existsSync(path.join(c.root, 'demo')), 'files deleted')
   console.log('ok launcherx (unit + end-to-end)')
 })().catch(e => { console.error(e); process.exit(1) })

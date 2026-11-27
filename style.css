@@ -506,7 +506,7 @@ button[data-href] { color: #fff; text-decoration: none !important; }
 /* GTA 6 (Launcher-X) page: same layout as a profile, its own tabs, projects as mod-like cards. */
 #lxList, .lxOnly { display: none; } body.lxv .lxOnly { display: flex; }
 body.lxv #list, body.lxv #chips, body.lxv #foot, body.lxv #rename, body.lxv #tabs > :not(.lxOnly), body.lxv main > header > :not(.hd):not(#title) { display: none !important; }
-body.lxv #lxList { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-content: start; padding: 16px; overflow-y: auto; flex: 1; }
+body.lxv #lxList { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; gap: 8px; align-content: start; padding: 16px; overflow-y: auto; flex: 1; }
 .lxicon { display: grid; place-items: center; font-weight: 700; color: var(--head); }
 .lxp .actions { display: flex; gap: 6px; align-items: center; } .lxp .actions button:not(.icon) { padding: 8px 12px; }
 .lxp .body { cursor: default; } .lxp .body:hover b { text-decoration: none; }
@@ -515,3 +515,9 @@ body.lxv #lxList { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8p
 #notesDlg { width: min(640px, calc(100vw - 32px)); } #notesText { white-space: pre-wrap; max-height: 60vh; overflow-y: auto; font-size: 14px; line-height: 1.5; }
 .appver { align-items: center; } .appver > * { flex: none; }
 .lxp .body p a { color: var(--accent); cursor: pointer; }
+.lxbar { display: flex; gap: 8px; align-items: center; } .lxbar select { flex: 1; } .lxbar .play { flex: none; min-width: 140px; }
+.lxlog { margin: -4px 0 0; max-height: 260px; overflow: auto; padding: 10px 12px; border-radius: 8px; background: var(--input); font: 12px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+.lxpanel { margin-top: -4px; padding: 12px 14px; border-radius: 8px; background: var(--card); max-width: none; display: grid; gap: 8px; }
+.lxpanel p { margin: 0; } .lxp button.tag { border: 0; cursor: pointer; text-decoration: none; }
+.lxp .actions .prep { opacity: 1; } .lxp .actions .stop { background: var(--danger); }
+.lxp .top { flex-wrap: wrap; row-gap: 4px; }
