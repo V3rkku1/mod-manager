@@ -3,7 +3,7 @@ const names = ['listProfiles', 'createProfile', 'updateProfile', 'deleteProfile'
   'games', 'mcVersions', 'search', 'details', 'pageUrl', 'install', 'uninstall', 'setDisabled', 'checkUpdates', 'update',
   'deploy', 'findGame', 'launch', 'exportCode', 'exportR2', 'exportFile', 'importFile', 'importCode', 'handleNxm',
   'accounts', 'loginStart', 'loginFinish', 'setActiveAccount', 'removeAccount', 'running', 'getLog', 'stop', 'play', 'repair',
-  'worlds', 'logFiles', 'readLog', 'addLocal', 'exportMrpack', 'importInstance', 'duplicate', 'unlinkPack', 'setAllDisabled', 'filters',
+  'worlds', 'logFiles', 'readLog', 'addLocal', 'exportMrpack', 'importInstance', 'duplicate', 'unlinkPack', 'splitPack', 'setAllDisabled', 'filters',
   'updateMod', 'orphans', 'conflicts', 'preview', 'sync', 'publish', 'follow', 'checkFollow', 'analyzeCrash', 'javaList',
   'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serverProps', 'setServerProps',
   'serverPlayers', 'playerAction', 'backups', 'backup', 'restoreBackup', 'deleteBackup',

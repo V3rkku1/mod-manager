@@ -148,6 +148,29 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     if (deps) for (const d of r.deps) warns.push(...await installMod(p, src, d.id, d.vid, true, undefined, true).catch(e => [`Dependency ${d.id}: ${e.message}`]))
     return warns
   }
+  // Splits a modpack entry into one entry per mod (Modrinth files identified by hash, so they can be toggled and updated);
+  // configs and other override files stay in the pack entry, which becomes a local "configs" entry.
+  async function splitPack(p, m) {
+    const sha = f => crypto.createHash('sha1').update(fs.readFileSync(mf(p, m, f))).digest('hex')
+    const byHash = Object.fromEntries(m.files.filter(f => /^(mods|resourcepacks|shaderpacks)\/[^/]+\.(jar|zip)$/i.test(f)).map(f => [sha(f), f]))
+    const vers = Object.keys(byHash).length ? await json(`${MR}/version_files`, { 'content-type': 'application/json' },
+      { method: 'POST', body: JSON.stringify({ hashes: Object.keys(byHash), algorithm: 'sha1' }) }).catch(() => ({})) : {}
+    const ids = [...new Set(Object.values(vers).map(v => v.project_id))]
+    const projs = Object.fromEntries(ids.length ? (await json(`${MR}/projects?ids=${q(JSON.stringify(ids))}`).catch(() => [])).map(x => [x.id, x]) : [])
+    for (const [h, rel] of Object.entries(byHash)) {
+      const v = vers[h], pr = v && projs[v.project_id], base = path.basename(rel)
+      const nm = pr ? { id: pr.id, src: 'modrinth', name: pr.title, version: v.version_number, vid: v.id, icon: pr.icon_url }
+        : { id: `local:${base}`, src: 'local', name: base.replace(/\.(jar|zip)$/i, ''), version: 'local' }
+      if (p.mods.some(x => x.id === nm.id)) continue
+      const stage = stageKey(nm.src, nm.id), sdir = path.join(dir(p.id), 'files', stage), to = inside(sdir, rel)
+      fs.rmSync(sdir, { recursive: true, force: true }); fs.mkdirSync(path.dirname(to), { recursive: true }); fs.renameSync(mf(p, m, rel), to)
+      p.mods.push({ ...nm, files: [rel], stage, ...(m.clientOnly?.includes(rel) ? { clientOnly: [rel] } : {}), ...(m.disabled ? { disabled: true } : {}) })
+      m.files = m.files.filter(f => f !== rel)
+    }
+    p.mods = p.mods.filter(x => x !== m)
+    if (m.files.length) p.mods.push({ ...m, id: `local:${m.name} configs`, src: 'local', name: `${m.name} configs`, vid: undefined, icon: undefined })
+    return p
+  }
   const uninstall = (pid, id) => {
     const p = load(pid), m = p.mods.find(m => m.id === id)
     if (m?.stage) fs.rmSync(mbase(p, m), { recursive: true, force: true })
@@ -1325,7 +1348,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         const stage = stageKey('local', path.basename(src)); p.__stage = stage
         const r = await S.modrinth.installPackData(p, zip, { id: `local:${path.basename(src)}`, name: index.name, version: index.versionId || 'local' }).finally(() => delete p.__stage)
         p.mods.push({ ...r.mod, src: 'local', stage })
-        return { profile: save(p), failed: [] }
+        return { profile: save(await splitPack(p, p.mods.at(-1))), failed: [] }
       }
       const has = f => fs.existsSync(path.join(src, f)), read = f => JSON.parse(fs.readFileSync(path.join(src, f), 'utf8'))
       let mc, loader = 'vanilla', lv, gameDir = src
@@ -1363,6 +1386,10 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       fs.cpSync(dir(id), dir(nid), { recursive: true })
       const target = p.target?.startsWith(dir(id)) ? dir(nid) + p.target.slice(dir(id).length) : p.target
       return save({ ...p, id: nid, name: `${p.name} (copy)`.slice(0, 40), target, deployed: target === p.target ? [] : p.deployed, playtime: 0 })
+    },
+    splitPack: async (pid, id) => {
+      const p = load(pid), m = p.mods.find(m => m.id === id && m.pack)
+      return m ? save(await splitPack(p, m)) : p
     },
     unlinkPack: (pid, id) => {
       const p = load(pid), m = p.mods.find(m => m.id === id && m.pack)

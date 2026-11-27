@@ -111,6 +111,7 @@ const row = m => {
   <p>${m.note ? `📝 ${esc(m.note)} · ` : ''}${parents.length ? `Needed by ${esc(parents.join(', '))} · ` : m.deps?.length ? `Uses ${m.deps.length} dependenc${m.deps.length === 1 ? 'y' : 'ies'} · ` : ''}${m.files.length} file${m.files.length === 1 ? '' : 's'}</p></div>
   <div class="actions">
     ${up ? `<button class="icon" data-act="changes" title="What's new">${ic('file')}</button><button class="upd" data-act="update">${ic('up')} Update</button>` : ''}
+    ${m.pack ? `<button class="icon" data-act="split" title="Show the mods in this pack separately">${ic('package')}</button>` : ''}
     ${m.pack && src !== 'local' ? `<button class="icon" data-act="unlink" title="Unlink from modpack (stop pack updates)">${ic('x')}</button>` : ''}
     ${src === 'local' ? '' : `<button class="icon" data-act="link" title="Open mod page">${ic('external')}</button>`}
     <button class="icon ${m.pinned ? 'on' : ''}" data-act="pin" title="${m.pinned ? 'Unpin (allow updates)' : 'Pin this version (skip updates)'}">${ic('key')}</button>
@@ -269,6 +270,7 @@ $('#list').onclick = async e => {
   if (act === 'link') return api.openExternal(await api.pageUrl(id, src, modId))
   if (act === 'fav') { toggleFav(src, el, modId); b.classList.toggle('on', isFav(src, modId)); if (favMode) search(); return }
   if (act === 'changes') { const m = cur.mods.find(m => m.id === modId), up = updates[id]?.[modId]; return showChanges(src, modId, m.name, up.vid, up.version) }
+  if (act === 'split') { b.disabled = true; const p = await run(() => api.splitPack(id, modId)); if (p) setProfile(p), showInstalled(); return }
   if (act === 'unlink') { const p = await run(() => api.unlinkPack(id, modId)); if (p) setProfile(p), showInstalled(); return }
   const remove = act === 'remove' || (act === 'toggle' && b.classList.contains('done'))
   const was = remove && cur.mods.find(m => m.id === modId)
