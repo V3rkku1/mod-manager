@@ -3,6 +3,8 @@ const { json, bytes, q, write } = require('../lib')
 const { unzipSync } = require('fflate')
 const MR = 'https://api.modrinth.com/v2'
 const DIRS = { mod: 'mods', resourcepack: 'resourcepacks', shader: 'shaderpacks' }
+// Loader names are shown elsewhere; keep only real categories on cards.
+const LOADERS = new Set(['fabric', 'forge', 'neoforge', 'quilt', 'babric', 'liteloader', 'rift', 'modloader', 'minecraft', 'vanilla', 'iris', 'optifine', 'canvas', 'datapack', 'paper', 'spigot', 'bukkit', 'purpur', 'folia', 'sponge', 'velocity', 'bungeecord', 'waterfall'])
 const SORT = { popular: 'downloads', updated: 'updated', newest: 'newest' }
 // .mrpack spec only allows these download hosts.
 const PACK_HOSTS = /^https:\/\/(cdn\.modrinth\.com|github\.com|raw\.githubusercontent\.com|gitlab\.com)\//
@@ -56,7 +58,7 @@ module.exports = ({ files, settings }) => {
       const facets = [[`project_type:${kind}`], [`versions:${p.mc.version}`], ...loaderFacet, ...categories.map(c => [`categories:${c}`]), ...envFacet]
       const index = (!sort || sort === 'popular') && text ? 'relevance' : SORT[sort] || SORT.popular
       const r = await json(`${MR}/search?query=${q(text)}&facets=${q(facets)}&index=${index}&limit=20&offset=${(page - 1) * 20}`)
-      return { pages: Math.ceil(r.total_hits / 20), items: r.hits.map(m => ({ id: m.project_id, title: m.title, author: m.author, desc: m.description, icon: m.icon_url, downloads: m.downloads, tags: m.categories })) }
+      return { pages: Math.ceil(r.total_hits / 20), items: r.hits.map(m => ({ id: m.project_id, title: m.title, author: m.author, desc: m.description, icon: m.icon_url, downloads: m.downloads, tags: m.categories.filter(c => !LOADERS.has(c)) })) }
     },
 
     async install(p, id, vid) {

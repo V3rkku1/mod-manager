@@ -25,8 +25,11 @@ const curSrc = () => cur.type === 'modrinth' ? $('#src').value : defSrc(cur)
 const srcOf = m => m.src || defSrc(cur)
 const warn = p => p?.warn?.forEach(w => toast(w, true))
 
+// Last profile + tab (per-device convenience, so localStorage is fine).
+const remember = () => { try { if (cur) localStorage.setItem('mm.last', JSON.stringify({ id: cur.id, tab })) } catch {} }
 async function refresh(id) {
   profiles = await api.listProfiles()
+  if (id === undefined && !cur && remembering) { try { const l = JSON.parse(localStorage.getItem('mm.last')); if (profiles.some(p => p.id === l.id)) id = l.id, tab = l.tab || tab } catch {} }
   cur = profiles.find(p => p.id === (id ?? cur?.id)) || profiles[0] || null
   render()
 }
@@ -69,7 +72,9 @@ function render() {
   $('main').className = tab
   $('#title').textContent = TITLES[tab][0]
   $('main .hd use').setAttribute('href', '#i-' + TITLES[tab][1])
+  const list = $('#list'); list.classList.remove('enter'); void list.offsetWidth; list.classList.add('enter')
   ;({ browse: search, installed: showInstalled, worlds: showWorlds, logs: showLogs, server: showServer, options: showOptions })[tab]()
+  remember()
 
 }
 
@@ -83,7 +88,7 @@ function updateBadges() {
 
 const installedBtn = `<span class="a">${ic('check')} Installed</span><span class="b">${ic('trash')} Remove</span>`
 const card = (m, src, installed) => `<div class="mod" data-id="${esc(m.id)}" data-src="${src}">
-  ${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy">` : '<div class="noicon"></div>'}
+  ${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy" decoding="async">` : '<div class="noicon"></div>'}
   <div class="body"><div class="top"><b>${esc(m.title)}</b>${m.author ? `<small>by ${esc(m.author)}</small>` : ''}
   ${m.downloads != null ? `<small>${ic('download', 'i sm')} ${fmt(m.downloads)}</small>` : ''}${(m.tags || []).slice(0, 3).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div><p>${esc(m.desc)}</p></div>
   <div class="actions">
@@ -96,7 +101,7 @@ const row = m => {
   const parents = cur.mods.filter(x => x.deps?.includes(m.id)).map(x => x.name)
   return `<div class="mod ${m.disabled ? 'off' : ''} ${selected.has(m.id) ? 'sel' : ''}" data-id="${esc(m.id)}" data-src="${src}">
   <input type="checkbox" class="pick" data-act="select" ${selected.has(m.id) ? 'checked' : ''} title="Select">
-  ${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy">` : '<div class="noicon"></div>'}
+  ${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy" decoding="async">` : '<div class="noicon"></div>'}
   <div class="body"><div class="top"><b>${esc(m.name)}</b><span class="tag">${esc(m.version)}</span>
   ${src === 'local' ? '<span class="tag">Local file</span>' : cur.type === 'modrinth' ? `<span class="tag src ${src}">${SRC[src]}</span>` : ''}${m.pack ? '<span class="tag pack">Modpack</span>' : ''}
   ${up ? `<span class="tag upd">→ ${esc(up)}</span>` : ''}${m.pinned ? `<span class="tag">${ic('key', 'i sm')} Pinned</span>` : ''}</div>
@@ -112,13 +117,26 @@ const row = m => {
   </div></div>`
 }
 
+// Search results are cached for 3 minutes and the next page is prefetched, so paging and tab switches are instant.
+const searchCache = new Map()
+const searchArgs = (pg = page) => [cur.id, curSrc(), $('#q').value, pg, { kind: $('#kind').value, sort: $('#sort').value, categories: [...chips], section: $('#section').value, env: $('#env').value }]
+function cachedSearch(args) {
+  const key = JSON.stringify(args), hit = searchCache.get(key)
+  if (hit && Date.now() - hit.t < 180e3) return hit.p
+  const p = api.search(...args); searchCache.set(key, { t: Date.now(), p })
+  p.catch(() => searchCache.delete(key))
+  if (searchCache.size > 200) searchCache.delete(searchCache.keys().next().value)
+  return p
+}
 async function search(keepPage) {
   const id = cur.id, src = curSrc()
   if (!keepPage) page = 1
-  $('#list').innerHTML = '<div class="skel"></div>'.repeat(6)
+  const args = searchArgs(), key = JSON.stringify(args)
+  if (!searchCache.has(key)) $('#list').innerHTML = '<div class="skel"></div>'.repeat(6)
   loadFilters()
-  const res = await run(() => api.search(id, src, $('#q').value, page, { kind: $('#kind').value, sort: $('#sort').value, categories: [...chips], section: $('#section').value, env: $('#env').value }))
-  if (cur?.id !== id || tab !== 'browse') return
+  const res = await run(() => cachedSearch(args))
+  if (cur?.id !== id || tab !== 'browse' || JSON.stringify(searchArgs()) !== key) return
+  if (res && page < res.pages) (window.requestIdleCallback || setTimeout)(() => cachedSearch(searchArgs(page + 1)).catch(() => {}))
   if (!res) return $('#list').innerHTML = `<div class="hint">${ic('alert')}Couldn't load mods.</div>`
   const have = new Set(cur.mods.map(m => m.id))
   pages = Math.max(1, res.pages || 1)
@@ -401,20 +419,46 @@ $('#saveFile').onclick = async () => {
   if (n != null) toast(`Saved with ${n} config file${n === 1 ? '' : 's'}`)
 }
 
-// Settings
-async function openSettings() {
-  const s = await api.getSettings(), f = $('#settingsForm')
-  f.curseforgeKey.value = s.curseforgeKey || ''; f.nexusKey.value = s.nexusKey || ''; f.nxmHandler.checked = !!s.nxmHandler
-  f.msClientId.value = s.msClientId || ''; f.autoStart.checked = !!s.autoStart; f.autoUpdate.checked = s.autoUpdate !== false; f.githubToken.value = s.githubToken || ''; f.modrinthToken.value = s.modrinthToken || ''; f.theme.value = s.theme || 'dark'; f.maxMem.value = s.launch?.maxMem || ''
-  $('#login').hidden = true; showAccounts()
-  $('#settingsDlg').showModal()
+// Settings (+ live preview of appearance; Cancel reverts)
+const LOOK = { theme: 'midnight', accent: '#5865f2', density: 'comfy', scale: 100, motion: true, descs: true }
+let look = { ...LOOK }, lookSaved = true
+function applyLook(l) {
+  const r = document.documentElement
+  Object.assign(r.dataset, { theme: l.theme, density: l.density, motion: l.motion ? 'on' : 'off', descs: l.descs ? 'on' : 'off' })
+  r.style.setProperty('--accent', l.accent)
+  document.body.style.zoom = l.scale / 100
+  const cs = getComputedStyle(r); api.titlebar?.(cs.getPropertyValue('--rail').trim(), cs.getPropertyValue('--muted').trim()).catch?.(() => {})
 }
+const lookFrom = f => ({ theme: f.elements.theme.value || 'midnight', accent: f.elements.accent.value || $('#accentPick').value, density: f.elements.density.value || 'comfy',
+  scale: +f.elements.scale.value || 100, motion: f.elements.motion.checked, descs: f.elements.descs.checked })
+async function openSettings() {
+  const s = await api.getSettings(), f = $('#settingsForm'), el = f.elements
+  el.curseforgeKey.value = s.curseforgeKey || ''; el.nexusKey.value = s.nexusKey || ''; el.nxmHandler.checked = !!s.nxmHandler
+  el.msClientId.value = s.msClientId || ''; el.autoStart.checked = !!s.autoStart; el.autoUpdate.checked = s.autoUpdate !== false; el.rememberLast.checked = s.rememberLast !== false
+  el.githubToken.value = s.githubToken || ''; el.modrinthToken.value = s.modrinthToken || ''; el.maxMem.value = s.launch?.maxMem || ''
+  el.theme.value = look.theme; el.density.value = look.density; el.scale.value = look.scale; el.motion.checked = look.motion; el.descs.checked = look.descs
+  el.accent.value = look.accent; $('#accentPick').value = look.accent; $('#scaleOut').textContent = look.scale + '%'
+  $('#login').hidden = true; showAccounts(); lookSaved = false
+  setSection('appearance'); $('#settingsDlg').showModal()
+}
+const setSection = sec => {
+  document.querySelectorAll('.setnav [data-sec]').forEach(b => b.classList.toggle('on', b.dataset.sec === sec))
+  document.querySelectorAll('.setbody section').forEach(x => x.hidden = x.dataset.sec !== sec)
+}
+$('.setnav').onclick = e => { const b = e.target.closest('[data-sec]'); if (b) setSection(b.dataset.sec) }
+$('#settingsForm').addEventListener('input', e => {
+  if (e.target.id === 'accentPick') $('#settingsForm').elements.accent.forEach(r => r.checked = false)
+  if (e.target.closest('[data-sec=appearance]')) { const l = lookFrom($('#settingsForm')); $('#scaleOut').textContent = l.scale + '%'; applyLook(l) }
+})
+$('#settingsDlg').addEventListener('close', () => { if (!lookSaved) applyLook(look) })
 $('#settingsForm').onsubmit = async e => {
   e.preventDefault()
-  const f = e.target
-  if (await run(() => api.saveSettings({ curseforgeKey: f.curseforgeKey.value.trim(), nexusKey: f.nexusKey.value.trim(), nxmHandler: f.nxmHandler.checked,
-    msClientId: f.msClientId.value.trim(), autoStart: f.autoStart.checked, autoUpdate: f.autoUpdate.checked, githubToken: f.githubToken.value.trim(), modrinthToken: f.modrinthToken.value.trim(), theme: f.theme.value, launch: { maxMem: f.maxMem.value } })))
-    applyTheme(f.theme.value), $('#settingsDlg').close(), toast('Settings saved'), Object.keys(gameCache).forEach(k => delete gameCache[k])
+  const f = e.target, el = f.elements, l = lookFrom(f)
+  if (await run(() => api.saveSettings({ curseforgeKey: el.curseforgeKey.value.trim(), nexusKey: el.nexusKey.value.trim(), nxmHandler: el.nxmHandler.checked,
+    msClientId: el.msClientId.value.trim(), autoStart: el.autoStart.checked, autoUpdate: el.autoUpdate.checked, rememberLast: el.rememberLast.checked,
+    githubToken: el.githubToken.value.trim(), modrinthToken: el.modrinthToken.value.trim(), launch: { maxMem: el.maxMem.value }, ...l }))) {
+    look = l; lookSaved = true; applyLook(look); $('#settingsDlg').close(); toast('Settings saved'); Object.keys(gameCache).forEach(k => delete gameCache[k]); searchCache.clear()
+  }
 }
 
 // New profile dialog
@@ -704,11 +748,43 @@ async function loadVersions() {
 }
 $('#snapshots').onchange = loadVersions
 
-const applyTheme = t => document.documentElement.dataset.theme = t || 'dark'
-api.getSettings().then(s => applyTheme(s.theme))
 api.running?.().then(r => { running = new Set(r); playButton() })
 
-refresh()
+// ---- Keyboard shortcuts + quick switcher ----
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || document.querySelector('dialog[open]:not(#quickDlg)')) return
+  const k = e.key.toLowerCase()
+  if (k === 'k') e.preventDefault(), openQuick()
+  if (k === ',') e.preventDefault(), openSettings()
+  if (!cur) return
+  if (k === 'f') { e.preventDefault(); if (tab !== 'browse') tab = 'browse', render(); $('#q').focus(); $('#q').select() }
+  const tabsShown = [...document.querySelectorAll('#tabs [data-tab]')].filter(b => b.offsetParent)
+  if (/^[1-9]$/.test(k) && tabsShown[k - 1]) e.preventDefault(), tabsShown[k - 1].click()
+})
+let quickSel = 0
+function openQuick() { $('#quickQ').value = ''; quickSel = 0; drawQuick(); $('#quickDlg').showModal(); $('#quickQ').focus() }
+const quickItems = () => profiles.filter(p => (p.name + ' ' + meta(p)).toLowerCase().includes($('#quickQ').value.toLowerCase()))
+function drawQuick() {
+  const list = quickItems(); quickSel = Math.min(quickSel, Math.max(0, list.length - 1))
+  $('#quickList').innerHTML = list.map((p, i) => `<button class="${i === quickSel ? 'on' : ''}" data-qid="${p.id}"><span class="pfp">${avatar(p)}</span><b>${esc(p.name)}</b><small>${esc(meta(p))}</small></button>`).join('') || '<p class="muted">No profiles</p>'
+}
+const quickGo = id => { $('#quickDlg').close(); cur = profiles.find(p => p.id === id); tab = 'browse'; chips.clear(); render() }
+$('#quickQ').oninput = () => { quickSel = 0; drawQuick() }
+$('#quickQ').onkeydown = e => {
+  const n = quickItems().length
+  if (e.key === 'ArrowDown') e.preventDefault(), quickSel = (quickSel + 1) % Math.max(n, 1), drawQuick()
+  if (e.key === 'ArrowUp') e.preventDefault(), quickSel = (quickSel - 1 + n) % Math.max(n, 1), drawQuick()
+  if (e.key === 'Enter' && n) quickGo(quickItems()[quickSel].id)
+}
+$('#quickList').onclick = e => { const b = e.target.closest('[data-qid]'); if (b) quickGo(b.dataset.qid) }
+$('#quickDlg').onclick = e => { if (e.target.id === 'quickDlg') $('#quickDlg').close() }
+
+let remembering = true
+api.getSettings().then(s => {
+  look = { ...LOOK, ...Object.fromEntries(Object.keys(LOOK).filter(k => s[k] !== undefined).map(k => [k, s[k]])) }
+  if (!('accent' in s) && s.theme === 'dark') look.theme = 'midnight' // old default -> new darker default
+  applyLook(look); remembering = s.rememberLast !== false
+}).finally(() => refresh())
 
 // ---- Bulk actions, orphans, crash helper, download queue ----
 async function bulkAction(kind) {
@@ -879,7 +955,7 @@ async function pluginSearch() {
   const id = cur.id, r = await run(() => api.pluginSearch(id, plugSrc, $('#plugQ')?.value || '', 1))
   if (!r || srvTab !== 'plugins') return
   const have = new Set((profiles.find(p => p.id === id)?.server?.plugins || []).map(x => x.id))
-  $('#plugList').innerHTML = r.items.map(m => `<div class="mod" data-pid="${esc(m.id)}">${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy">` : '<div class="noicon"></div>'}
+  $('#plugList').innerHTML = r.items.map(m => `<div class="mod" data-pid="${esc(m.id)}">${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy" decoding="async">` : '<div class="noicon"></div>'}
     <div class="body"><div class="top"><b>${esc(m.title)}</b><small>by ${esc(m.author)}</small><small>${ic('download', 'i sm')} ${fmt(m.downloads)}</small></div><p>${esc(m.desc)}</p></div>
     <div class="actions"><button class="act ${have.has(m.id) ? 'done' : ''}" data-pinst="${esc(m.id)}">${have.has(m.id) ? installedBtn : `${ic('download')} Install`}</button></div></div>`).join('') || '<p class="muted">No plugins found.</p>'
 }

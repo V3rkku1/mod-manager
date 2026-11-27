@@ -37,15 +37,24 @@ app.whenReady().then(() => {
   ipcMain.handle('openProfileFolder', async (_, id, sub = '') => { const p = (await core.listProfiles()).find(p => p.id === id); return p && shell.openPath(path.join(sub === 'files' ? path.join(app.getPath('userData'), 'profiles', id, 'files') : p.target, sub === 'files' ? '' : sub)) })
   ipcMain.handle('openExternal', (_, u) => /^https:\/\//.test(u) && shell.openExternal(u))
   ipcMain.handle('profilesDir', () => path.join(app.getPath('userData'), 'profiles'))
+  // Title bar buttons follow the app theme.
+  ipcMain.handle('titlebar', (_, color, symbolColor) => /^#[0-9a-f]{3,6}$/i.test(color) && /^#[0-9a-f]{3,6}$/i.test(symbolColor) && process.platform !== 'darwin' && win?.setTitleBarOverlay({ color, symbolColor }))
   ipcMain.handle('installUpdate', () => autoUpdater.quitAndInstall())
 
+  // Window size/position is remembered between runs.
+  const boundsFile = path.join(app.getPath('userData'), 'window.json')
+  let bounds = {}; try { bounds = JSON.parse(require('fs').readFileSync(boundsFile, 'utf8')) } catch {}
   win = new BrowserWindow({
-    width: 1280, height: 800, minWidth: 940, minHeight: 580, backgroundColor: '#313338',
+    width: 1280, height: 800, ...bounds, minWidth: 940, minHeight: 580, backgroundColor: '#0f1012', show: false,
     icon: path.join(__dirname, 'build/icon.png'),
-    titleBarStyle: 'hidden', titleBarOverlay: { color: '#1e1f22', symbolColor: '#b5bac1', height: 32 },
-    webPreferences: { preload: path.join(__dirname, 'preload.js') },
+    titleBarStyle: 'hidden', titleBarOverlay: { color: '#0f1012', symbolColor: '#b5bac1', height: 32 },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), spellcheck: false },
   })
   win.loadFile('index.html')
+  win.once('ready-to-show', () => { if (bounds.max) win.maximize(); win.show() })
+  let bt
+  const saveBounds = () => { clearTimeout(bt); bt = setTimeout(() => { try { require('fs').writeFileSync(boundsFile, JSON.stringify({ ...win.getNormalBounds(), max: win.isMaximized() })) } catch {} }, 500) }
+  win.on('resize', saveBounds); win.on('move', saveBounds)
   // Servers keep running in the tray when the window is closed (like a host app).
   win.on('close', e => {
     if (quitting || !core.serversRunning().length) return

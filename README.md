@@ -40,6 +40,15 @@ Build locally: `npm run dist` (installer needs Windows or Wine; `npx electron-bu
    - *Code with configs* (Thunderstore): uploads your BepInEx configs; also works in r2modman.
    - *Save as file* (`.mmpack`): mods + configs, send the file.
 
+## Customize
+
+Settings (gear, or Ctrl+,) has sections: Appearance, Accounts, Minecraft, Mod sites, App.
+
+- Themes: Midnight (default, extra dark), AMOLED black, Classic dark, Light; live preview.
+- Accent color (8 presets or any color), Comfortable / Compact layout, interface size 80–130%, animations on/off, hide mod descriptions.
+- Reopen the last profile and tab on start; the window remembers its size and position.
+- Shortcuts: Ctrl+K switch profile, Ctrl+F search, Ctrl+1–5 tabs, Ctrl+, settings.
+
 ## Sharing with friends
 
 - **Invite link**: Share > Invite link. Friends click it in Discord and the app imports the profile. (Needs GitHub Pages on this repo: Settings > Pages > deploy from branch, folder `/docs`.)

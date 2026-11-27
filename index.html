@@ -167,32 +167,83 @@
 
 <dialog id="settingsDlg">
   <form id="settingsForm">
-    <button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
-    <h2>Settings</h2>
-    <h3>MINECRAFT ACCOUNTS</h3>
-    <div id="accts"></div>
-    <div id="login" hidden><p>Go to <a id="loginUrl" data-href=""></a> and enter</p><div class="codebox"><input id="loginCode" readonly><button type="button" class="primary" data-copy-login><svg class="i"><use href="#i-copy"/></svg> Copy</button></div><p class="muted small">Waiting for you to sign in…</p></div>
-    <button type="button" id="addAcct"><svg class="i"><use href="#i-user"/></svg> Add Microsoft account</button>
-    <label>MICROSOFT CLIENT ID<input name="msClientId" autocomplete="off" placeholder="Azure app ID approved for Minecraft">
-      <a class="muted small" data-href="https://help.minecraft.net/hc/en-us/articles/16254801392141">How to get one (Azure app + Minecraft API approval)</a></label>
-    <div class="row"><label>DEFAULT MAX MEMORY (MB)<input name="maxMem" type="number" min="512" step="512" placeholder="4096"></label>
-    <label>THEME<select name="theme"><option value="dark">Dark</option><option value="light">Light</option></select></label></div>
-    <label class="check"><input type="checkbox" name="autoStart" class="switch"> Start Mod Manager when Windows starts</label>
-    <label class="check"><input type="checkbox" name="autoUpdate" class="switch"> Update the app automatically</label>
-    <h3>MOD SITES</h3>
-    <label>MODRINTH TOKEN <span class="muted">(optional, for Following)</span><input name="modrinthToken" type="password" autocomplete="off" placeholder="Personal access token">
-      <a class="muted small" data-href="https://modrinth.com/settings/pats">Create one at modrinth.com/settings/pats</a></label>
-    <label>CURSEFORGE API KEY<input name="curseforgeKey" type="password" autocomplete="off" placeholder="Needed for CurseForge mods">
-      <a class="muted small" data-href="https://console.curseforge.com/">Get a free key at console.curseforge.com</a></label>
-    <label>GITHUB TOKEN <span class="muted">(optional, for Live share)</span><input name="githubToken" type="password" autocomplete="off" placeholder="Token with gist scope">
-      <a class="muted small" data-href="https://github.com/settings/tokens/new?scopes=gist&description=Mod%20Manager">Create one (only gist access)</a></label>
-    <label>NEXUS MODS API KEY<input name="nexusKey" type="password" autocomplete="off" placeholder="Needed to download from Nexus">
-      <a class="muted small" data-href="https://www.nexusmods.com/users/myaccount?tab=api">Find it under Account → API access</a></label>
-    <label class="check"><input type="checkbox" name="nxmHandler" class="switch"> Handle Nexus “Mod Manager Download” buttons</label>
-    <p class="muted small">Keys are stored only on this computer.</p>
-    <menu><button type="button" data-close>Cancel</button><button class="primary">Save</button></menu>
+    <nav class="setnav">
+      <b>Settings</b>
+      <button type="button" data-sec="appearance" class="on"><svg class="i"><use href="#i-sliders"/></svg> Appearance</button>
+      <button type="button" data-sec="accounts"><svg class="i"><use href="#i-user"/></svg> Accounts</button>
+      <button type="button" data-sec="minecraft"><svg class="i"><use href="#i-grass"/></svg> Minecraft</button>
+      <button type="button" data-sec="sites"><svg class="i"><use href="#i-key"/></svg> Mod sites</button>
+      <button type="button" data-sec="app"><svg class="i"><use href="#i-gear"/></svg> App</button>
+    </nav>
+    <div class="setbody">
+      <button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
+      <section data-sec="appearance">
+        <h2>Appearance</h2>
+        <h3>THEME</h3>
+        <div class="themes">
+          <label class="theme t-midnight"><input type="radio" name="theme" value="midnight"><i></i>Midnight</label>
+          <label class="theme t-amoled"><input type="radio" name="theme" value="amoled"><i></i>AMOLED black</label>
+          <label class="theme t-dark"><input type="radio" name="theme" value="dark"><i></i>Classic dark</label>
+          <label class="theme t-light"><input type="radio" name="theme" value="light"><i></i>Light</label>
+        </div>
+        <h3>ACCENT COLOR</h3>
+        <div class="swatches">
+          <label><input type="radio" name="accent" value="#5865f2"><i></i></label>
+          <label><input type="radio" name="accent" value="#3ba55c"><i></i></label>
+          <label><input type="radio" name="accent" value="#eb459e"><i></i></label>
+          <label><input type="radio" name="accent" value="#f0b232"><i></i></label>
+          <label><input type="radio" name="accent" value="#ed4245"><i></i></label>
+          <label><input type="radio" name="accent" value="#00a8fc"><i></i></label>
+          <label><input type="radio" name="accent" value="#9b59f6"><i></i></label>
+          <label><input type="radio" name="accent" value="#1abc9c"><i></i></label>
+          <label class="custom" title="Custom color"><input type="color" id="accentPick"></label>
+        </div>
+        <h3>LAYOUT</h3>
+        <div class="seg seg2"><label><input type="radio" name="density" value="comfy">Comfortable</label><label><input type="radio" name="density" value="compact">Compact</label></div>
+        <label>INTERFACE SIZE <span id="scaleOut" class="muted">100%</span><input type="range" name="scale" min="80" max="130" step="5"></label>
+        <label class="check"><input type="checkbox" name="motion" class="switch"> Animations</label>
+        <label class="check"><input type="checkbox" name="descs" class="switch"> Show mod descriptions in lists</label>
+      </section>
+      <section data-sec="accounts" hidden>
+        <h2>Minecraft accounts</h2>
+        <div id="accts"></div>
+        <div id="login" hidden><p>Go to <a id="loginUrl" data-href=""></a> and enter</p><div class="codebox"><input id="loginCode" readonly><button type="button" class="primary" data-copy-login><svg class="i"><use href="#i-copy"/></svg> Copy</button></div><p class="muted small">Waiting for you to sign in…</p></div>
+        <button type="button" id="addAcct"><svg class="i"><use href="#i-user"/></svg> Add Microsoft account</button>
+        <label>MICROSOFT CLIENT ID<input name="msClientId" autocomplete="off" placeholder="Azure app ID approved for Minecraft">
+          <a class="muted small" data-href="https://help.minecraft.net/hc/en-us/articles/16254801392141">How to get one (Azure app + Minecraft API approval)</a></label>
+      </section>
+      <section data-sec="minecraft" hidden>
+        <h2>Minecraft</h2>
+        <label>DEFAULT MAX MEMORY (MB)<input name="maxMem" type="number" min="512" step="512" placeholder="4096"></label>
+        <p class="muted small">Each profile can override this in its Options tab.</p>
+      </section>
+      <section data-sec="sites" hidden>
+        <h2>Mod sites</h2>
+        <label>MODRINTH TOKEN <span class="muted">(optional, for Following)</span><input name="modrinthToken" type="password" autocomplete="off" placeholder="Personal access token">
+          <a class="muted small" data-href="https://modrinth.com/settings/pats">Create one at modrinth.com/settings/pats</a></label>
+        <label>CURSEFORGE API KEY<input name="curseforgeKey" type="password" autocomplete="off" placeholder="Needed for CurseForge mods">
+          <a class="muted small" data-href="https://console.curseforge.com/">Get a free key at console.curseforge.com</a></label>
+        <label>GITHUB TOKEN <span class="muted">(optional, for Live share)</span><input name="githubToken" type="password" autocomplete="off" placeholder="Token with gist scope">
+          <a class="muted small" data-href="https://github.com/settings/tokens/new?scopes=gist&description=Mod%20Manager">Create one (only gist access)</a></label>
+        <label>NEXUS MODS API KEY<input name="nexusKey" type="password" autocomplete="off" placeholder="Needed to download from Nexus">
+          <a class="muted small" data-href="https://www.nexusmods.com/users/myaccount?tab=api">Find it under Account → API access</a></label>
+        <label class="check"><input type="checkbox" name="nxmHandler" class="switch"> Handle Nexus “Mod Manager Download” buttons</label>
+        <p class="muted small">Keys are stored only on this computer.</p>
+      </section>
+      <section data-sec="app" hidden>
+        <h2>App</h2>
+        <label class="check"><input type="checkbox" name="rememberLast" class="switch"> Reopen the last profile and tab on start</label>
+        <label class="check"><input type="checkbox" name="autoStart" class="switch"> Start Mod Manager when Windows starts</label>
+        <label class="check"><input type="checkbox" name="autoUpdate" class="switch"> Update the app automatically</label>
+        <h3>KEYBOARD SHORTCUTS</h3>
+        <div class="keys"><kbd>Ctrl</kbd>+<kbd>K</kbd> Switch profile · <kbd>Ctrl</kbd>+<kbd>F</kbd> Search mods · <kbd>Ctrl</kbd>+<kbd>1–5</kbd> Tabs · <kbd>Ctrl</kbd>+<kbd>,</kbd> Settings · <kbd>Esc</kbd> Close</div>
+      </section>
+      <menu><button type="button" data-close>Cancel</button><button class="primary">Save</button></menu>
+    </div>
   </form>
 </dialog>
+
+<dialog id="quickDlg"><input id="quickQ" placeholder="Jump to a profile…" autocomplete="off"><div id="quickList"></div></dialog>
 
 <dialog id="askDlg"><form id="askForm"><h2 id="askTitle"></h2><input id="askInput" maxlength="40">
   <menu><button type="button" data-close>Cancel</button><button class="primary">OK</button></menu></form></dialog>
