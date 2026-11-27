@@ -59,6 +59,19 @@ Settings (gear, or Ctrl+,) has sections: Appearance, Accounts, Minecraft, Mod si
 - Reopen the last profile and tab on start; the window remembers its size and position.
 - Shortcuts: Ctrl+K switch profile, Ctrl+F search, Ctrl+1–5 tabs, Ctrl+, settings.
 
+## Skyrim, Fallout & other Nexus games (Vortex-style)
+
+- **Own folder per mod.** Two mods can ship the same file. Lower in the Installed list wins; the conflict banner has "Use …" buttons to change the winner.
+- **FOMOD installers.** Archives with `fomod/ModuleConfig.xml` open a step-by-step installer (options, pictures, conditions).
+- **Data/ folder fix.** Archives that start with `Data/` (Bethesda) or `Mods/` (Stardew, Witcher 3) are unpacked to the right place.
+- **Load order.** Options → Plugin load order: drag up/down, turn plugins on/off. Written to `plugins.txt` on Deploy.
+- **Tools.** Options → Add tool (LOOT, xEdit, SKSE…), then Run.
+- **Purge.** Options → Purge removes every deployed file from the game folder.
+- **Hard links.** Settings → App → Deploy with hard links (fast, no extra space; same drive only, falls back to copying).
+- **Collections.** Nexus profiles: Options → Browse collections → Install. Needs Nexus Premium for automatic downloads.
+- **Endorse** mods from the mod details window (needs your Nexus API key).
+- **Epic and GOG** games are found as well as Steam.
+
 ## Sharing with friends
 
 - **Invite link**: Share > Invite link. Friends click it in Discord and the app imports the profile. (Needs GitHub Pages on this repo: Settings > Pages > deploy from branch, folder `/docs`.)

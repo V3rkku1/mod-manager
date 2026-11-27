@@ -248,6 +248,7 @@
         <label class="check"><input type="checkbox" name="rememberLast" class="switch"> Reopen the last profile and tab on start</label>
         <label class="check"><input type="checkbox" name="autoStart" class="switch"> Start Mod Manager when Windows starts</label>
         <label class="check"><input type="checkbox" name="autoUpdate" class="switch"> Update the app automatically</label>
+        <label class="check"><input type="checkbox" name="hardlink" class="switch"> Deploy with hard links <span class="muted">(faster, no extra disk space; game and app on the same drive)</span></label>
         <h3>KEYBOARD SHORTCUTS</h3>
         <div class="keys"><kbd>Ctrl</kbd>+<kbd>K</kbd> Switch profile · <kbd>Ctrl</kbd>+<kbd>F</kbd> Search mods · <kbd>Ctrl</kbd>+<kbd>1–5</kbd> Tabs · <kbd>Ctrl</kbd>+<kbd>,</kbd> Settings · <kbd>Esc</kbd> Close</div>
       </section>
@@ -276,6 +277,10 @@
 <input type="file" id="iconInput" accept="image/*" hidden>
 <div id="drop" hidden><svg class="i"><use href="#i-download"/></svg>Drop files to add them to this profile</div>
 
+<dialog id="fomodDlg"><h2 id="fmTitle"></h2><div id="fmBody"></div>
+  <div class="row end"><button type="button" id="fmCancel">Cancel</button><button type="button" id="fmBack">Back</button><button type="button" id="fmNext" class="primary">Next</button></div></dialog>
+<dialog id="collDlg"><button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
+  <h2>Nexus collections</h2><input id="collQ" placeholder="Search collections"><div id="collBody"></div></dialog>
 <dialog id="detailDlg">
   <button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
   <div id="detail"></div>

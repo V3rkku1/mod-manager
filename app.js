@@ -180,7 +180,7 @@ async function banners() {
   const id = cur.id, [c, f] = await Promise.all([api.conflicts(id).catch(() => []), cur.follow ? api.checkFollow(id).catch(() => null) : null])
   if (cur?.id !== id || tab !== 'installed') return
   const d = f?.diff, n = d ? d.add.length + d.change.length + d.remove.length : 0
-  $('#banners').innerHTML = (c.length ? `<div class="banner warn">${ic('alert')}<div><b>${c.length} conflict${c.length > 1 ? 's' : ''}</b>${c.slice(0, 4).map(x => `<p>${x.type === 'file' ? `${esc(x.mods.join(' + '))} both write <code>${esc(x.file)}</code>` : `${esc(x.mods.join(' and '))} are incompatible`}</p>`).join('')}</div></div>` : '')
+  $('#banners').innerHTML = (c.length ? `<div class="banner warn">${ic('alert')}<div><b>${c.length} conflict${c.length > 1 ? 's' : ''}</b>${c.slice(0, 4).map(x => `<p>${x.type === 'file' ? `${esc(x.mods.join(' + '))} both write <code>${esc(x.file)}</code> — <b>${esc(x.winner)}</b> wins ${x.ids.slice(0, -1).map((id, i) => `<button class="linkish" data-win="${esc(id)}" data-after="${esc(x.ids.at(-1))}">Use ${esc(x.mods[i])}</button>`).join(' ')}` : `${esc(x.mods.join(' and '))} are incompatible`}</p>`).join('')}<small class="muted">Lower in the list wins. Change order with these buttons, then Deploy.</small></div></div>` : '')
     + (n ? `<div class="banner">${ic('refresh')}<div><b>Your friend updated this pack</b><p>+${d.add.length} new · ${d.change.length} changed · -${d.remove.length} removed</p></div><button class="primary" id="syncFollow">Sync now</button></div>` : '')
 }
 
@@ -247,7 +247,7 @@ $('#updAll').onclick = async () => {
 }
 
 async function doInstall(src, modId, vid) {
-  const p = await run(() => api.install(cur.id, src, modId, vid))
+  const p = await fm(await run(() => api.install(cur.id, src, modId, vid)))
   if (p) setProfile(p), warn(p)
   return p
 }
@@ -256,6 +256,7 @@ $('#list').onclick = async e => {
   const pg = e.target.closest('[data-page]'); if (pg) return page = +pg.dataset.page, search(true)
   const bk = e.target.closest('[data-bulk]')?.dataset.bulk
   if (bk) return bulkAction(bk)
+  const w = e.target.closest('[data-win]'); if (w) { const p = await run(() => api.moveMod(cur.id, w.dataset.win, w.dataset.after)); if (p) setProfile(p), showInstalled(), toast('Order changed — Deploy to apply'); return }
   if (e.target.id === 'syncFollow') return run(async () => { e.target.disabled = true; const r = await api.sync(cur.id, `gist:${cur.follow.gist}`, { remove: true }); setProfile(r.profile); render(); toast(r.failed.length ? `Synced, ${r.failed.length} failed` : 'Synced with your friend', !!r.failed.length) })
   const el = e.target.closest('.mod'); if (!el || tab === 'server') return
   const modId = el.dataset.id, src = el.dataset.src
@@ -274,7 +275,7 @@ $('#list').onclick = async e => {
   const html = b.innerHTML
   b.disabled = true
   b.innerHTML = `${ic('refresh', 'i spin')} ${act === 'update' ? 'Updating' : remove ? 'Removing' : 'Installing'}…`
-  const p = act === 'update' ? await run(() => api.update(id, modId)) : remove ? await run(() => api.uninstall(id, modId)) : await doInstall(src, modId)
+  const p = act === 'update' ? await fm(await run(() => api.update(id, modId))) : remove ? await run(() => api.uninstall(id, modId)) : await doInstall(src, modId)
   if (!p) return b.disabled = false, b.innerHTML = html
   if (act === 'update') delete updates[id]?.[modId], warn(p)
   if (was && was.src !== 'local') toast(`Removed ${was.name}`, false, { label: 'Undo', fn: async () => { const q = await doInstall(srcOf(was), was.id, was.vid ?? was.version); if (q && cur?.id === id) render() } })
@@ -331,6 +332,7 @@ function renderDetails(pane) {
     ${d.icon ? `<img src="${esc(d.icon)}" alt="">` : '<div class="noicon"></div>'}
     <div><h2>${esc(d.title)}</h2><p>${d.author ? `by ${esc(d.author)} · ` : ''}${esc(d.summary)}</p></div>
     <div class="actions"><button class="icon" data-href="${esc(d.url)}" title="Open in browser">${ic('external')}</button>
+    ${inst && d.src === 'nexus' ? `<button data-endorse ${inst.endorsed ? 'disabled' : ''}>${ic('check')} ${inst.endorsed ? 'Endorsed' : 'Endorse'}</button>` : ''}
     ${inst ? `<button class="act done" data-ver="remove">${installedBtn}</button>` : `<button class="act" data-ver="">${ic('download')} Install latest</button>`}</div></div>
     <div class="dtabs"><button data-pane="desc" class="${pane === 'desc' ? 'on' : ''}">Description</button>
     <button data-pane="vers" class="${pane === 'vers' ? 'on' : ''}">Versions (${d.versions.length})</button></div>
@@ -342,6 +344,7 @@ function renderDetails(pane) {
 $('#detail').onclick = async e => {
   const chg = e.target.closest('[data-chg]'); if (chg) return showChanges(detail.src, detail.id, detail.title, chg.dataset.chg, chg.dataset.chgname)
   const t = e.target.closest('[data-pane]'); if (t) return renderDetails(t.dataset.pane)
+  if (e.target.closest('[data-endorse]')) { const p = await run(() => api.endorse(cur.id, detail.id)); if (p) setProfile(p), toast('Endorsed — thanks the author'), renderDetails($('.dtabs .on').dataset.pane); return }
   if (e.target.matches('.gallery img')) {
     const z = document.createElement('div'); z.id = 'zoom'; z.innerHTML = `<img src="${esc(e.target.src)}" alt="">`
     z.onclick = () => z.remove(); return $('#detailDlg').append(z)
@@ -450,7 +453,7 @@ const lookFrom = f => ({ theme: f.elements.theme.value || 'midnight', accent: f.
 async function openSettings(section = 'appearance') {
   const s = await api.getSettings(), f = $('#settingsForm'), el = f.elements
   el.curseforgeKey.value = s.curseforgeKey || ''; el.nexusKey.value = s.nexusKey || ''; el.nxmHandler.checked = !!s.nxmHandler
-  el.msClientId.value = s.msClientId || ''; el.autoStart.checked = !!s.autoStart; el.autoUpdate.checked = s.autoUpdate !== false; el.rememberLast.checked = s.rememberLast !== false
+  el.msClientId.value = s.msClientId || ''; el.autoStart.checked = !!s.autoStart; el.autoUpdate.checked = s.autoUpdate !== false; el.hardlink.checked = s.deployMode === 'hardlink'; el.rememberLast.checked = s.rememberLast !== false
   el.githubToken.value = s.githubToken || ''; el.modrinthToken.value = s.modrinthToken || ''; el.maxMem.value = s.launch?.maxMem || ''
   el.theme.value = look.theme; el.density.value = look.density; el.scale.value = look.scale; el.motion.checked = look.motion; el.descs.checked = look.descs
   el.accent.value = look.accent; $('#accentPick').value = look.accent; $('#scaleOut').textContent = look.scale + '%'
@@ -471,7 +474,7 @@ $('#settingsForm').onsubmit = async e => {
   e.preventDefault()
   const f = e.target, el = f.elements, l = lookFrom(f)
   if (await run(() => api.saveSettings({ curseforgeKey: el.curseforgeKey.value.trim(), nexusKey: el.nexusKey.value.trim(), nxmHandler: el.nxmHandler.checked,
-    msClientId: el.msClientId.value.trim(), autoStart: el.autoStart.checked, autoUpdate: el.autoUpdate.checked, rememberLast: el.rememberLast.checked,
+    msClientId: el.msClientId.value.trim(), autoStart: el.autoStart.checked, autoUpdate: el.autoUpdate.checked, deployMode: el.hardlink.checked ? 'hardlink' : 'copy', rememberLast: el.rememberLast.checked,
     githubToken: el.githubToken.value.trim(), modrinthToken: el.modrinthToken.value.trim(), launch: { maxMem: el.maxMem.value }, ...l }))) {
     look = l; lookSaved = true; applyLook(look); $('#settingsDlg').close(); toast('Settings saved'); Object.keys(gameCache).forEach(k => delete gameCache[k]); searchCache.clear()
   }
@@ -565,7 +568,7 @@ window.onUpdateReady?.(v => {
 // Nexus "Mod Manager Download" links
 window.onNxm?.(link => run(async () => {
   toast('Downloading from Nexus Mods…')
-  const p = await api.handleNxm(link, cur?.id)
+  const p = await fm(await api.handleNxm(link, cur?.id))
   warn(p); await refresh(p.id); toast(`Installed from Nexus: ${p.mods.at(-1)?.name}`)
 }))
 
@@ -638,7 +641,7 @@ async function showOptions() {
   if (cur.type !== 'modrinth') return $('#list').innerHTML = `<form class="opts" id="optsForm">
     <label>STEAM LAUNCH ARGUMENTS <span class="muted small">(used by Play)</span><input name="args" value="${esc(o.args || '')}" placeholder="-windowed -nosplash"></label>
     <div class="row"><button class="primary">${ic('check')} Save options</button><button type="button" id="playVanilla">${ic('play')} Play without mods</button></div>
-    <p class="muted small">"Play without mods" removes this profile's files from the game folder and starts the game. Your mod list is kept; press Deploy or Play to bring the mods back.</p></form>`
+    <p class="muted small">"Play without mods" removes this profile's files from the game folder and starts the game. Your mod list is kept; press Deploy or Play to bring the mods back.</p></form>` + await gameExtras()
   const javas = await api.javaList().catch(() => [])
   $('#list').innerHTML = `<form class="opts" id="optsForm">
     <div class="row"><label>MAX MEMORY (MB)<input name="maxMem" type="number" min="512" step="512" value="${o.maxMem || ''}" placeholder="Default"></label>
@@ -694,7 +697,7 @@ $('#list').addEventListener('submit', async e => {
 
 
 // Local files: button + drag and drop
-const addPaths = paths => paths.length && run(async () => { const p = await api.addLocal(cur.id, paths); setProfile(p); tab = 'installed'; render(); toast(`Added ${paths.length} file(s)`) })
+const addPaths = paths => paths.length && run(async () => { let p; for (const f of paths) p = await fm(await api.addLocal(cur.id, [f])); setProfile(p); tab = 'installed'; render(); toast(`Added ${paths.length} file(s)`) })
 $('#addFiles').onclick = () => $('#fileInput').click()
 $('#fileInput').onchange = e => { addPaths([...e.target.files].map(filePath)); e.target.value = '' }
 let dragDepth = 0
@@ -1221,3 +1224,133 @@ window.onLink?.(link => run(async () => {
   const res = kind === 'follow' ? await api.follow(decodeURIComponent(value)) : await api.importCode(decodeURIComponent(value))
   created(res)
 }))
+
+// ---- Vortex-style extras: FOMOD installer, load order, tools, purge, Nexus collections ----
+// Install results that carry an installer open the wizard; returns the final profile (or the input if none).
+const fm = async p => p?.fomod ? (await fomodWizard(p.id, p.fomod)) || p : p
+
+// FOMOD wizard: steps, group types, Required/Recommended/NotUsable, condition flags, conditional installs, priorities.
+// shortcut: fileDependency / gameDependency always count as met; check real files if an installer depends on them.
+function fomodWizard(pid, f, auto) {
+  const doc = new DOMParser().parseFromString(f.xml, 'text/xml').documentElement
+  const kids = (el, n) => el ? [...el.children].filter(c => c.localName.toLowerCase() === n.toLowerCase()) : []
+  const one = (el, n) => kids(el, n)[0], at = (el, a) => el?.getAttribute(a)
+  const ord = (el, n) => { const l = kids(el, n), o = at(el, 'order') || 'Ascending'; return o === 'Explicit' ? l : l.sort((a, b) => (at(a, 'name') || '').localeCompare(at(b, 'name') || '') * (o === 'Descending' ? -1 : 1)) }
+  let flags = {}
+  const met = d => { if (!d) return true; const r = [...d.children].map(c => c.localName === 'flagDependency' ? (flags[at(c, 'flag')] || '') === (at(c, 'value') || '') : c.localName === 'dependencies' ? met(c) : true); return !r.length || (at(d, 'operator') === 'Or' ? r.some(Boolean) : r.every(Boolean)) }
+  const typeOf = pl => { const td = one(pl, 'typeDescriptor'), t = one(td, 'type'); if (t) return at(t, 'name'); const dt = one(td, 'dependencyType'), hit = kids(one(dt, 'patterns'), 'pattern').find(p => met(one(p, 'dependencies'))); return at(hit ? one(hit, 'type') : one(dt, 'defaultType'), 'name') || 'Optional' }
+  const steps = ord(one(doc, 'installSteps'), 'installStep').map(s => ({ el: s, groups: ord(one(s, 'optionalFileGroups'), 'group').map(g => ({ name: at(g, 'name'), type: at(g, 'type'), plugins: ord(one(g, 'plugins'), 'plugin') })) }))
+  const sel = new Map(), path = []
+  const flagsFrom = list => { flags = {}; for (const i of list) for (const g of steps[i].groups) for (const pl of sel.get(g) || []) for (const fl of kids(one(pl, 'conditionFlags'), 'flag')) flags[at(fl, 'name')] = fl.textContent }
+  const nextStep = from => { flagsFrom(path); for (let i = from + 1; i < steps.length; i++) if (met(one(steps[i].el, 'visible'))) return i; return -1 }
+  const defaults = g => {
+    if (sel.has(g)) return
+    const ok = g.plugins.filter(p => typeOf(p) !== 'NotUsable')
+    let s = g.type === 'SelectAll' ? ok : ok.filter(p => ['Required', 'Recommended'].includes(typeOf(p)))
+    if (g.type === 'SelectExactlyOne' && !s.length) s = ok.slice(0, 1)
+    sel.set(g, new Set(/One$/.test(g.type) ? s.slice(0, 1) : s))
+  }
+  const enter = i => { path.push(i); flagsFrom(path.slice(0, -1)); steps[i].groups.forEach(defaults) }
+  const filesOf = el => [...kids(el, 'file'), ...kids(el, 'folder')].map(x => ({ source: at(x, 'source'), destination: at(x, 'destination'), folder: x.localName === 'folder', pr: +at(x, 'priority') || 0 }))
+  const finish = () => {
+    flagsFrom(path)
+    const picks = [...filesOf(one(doc, 'requiredInstallFiles')),
+      ...path.flatMap(i => steps[i].groups.flatMap(g => [...sel.get(g)].flatMap(pl => filesOf(one(pl, 'files'))))),
+      ...kids(one(one(doc, 'conditionalFileInstalls'), 'patterns'), 'pattern').filter(p => met(one(p, 'dependencies'))).flatMap(p => filesOf(one(p, 'files')))]
+    return api.fomodFinish(pid, f.stage, picks.sort((a, b) => a.pr - b.pr)) // higher priority copied last = wins
+  }
+  if (auto || nextStep(-1) < 0) { for (let i = nextStep(-1); i >= 0; i = nextStep(i)) enter(i); return run(finish) }
+  enter(nextStep(-1))
+  const dlg = $('#fomodDlg'), body = $('#fmBody'), nextLabel = () => $('#fmNext').textContent = nextStep(path.at(-1)) < 0 ? 'Install' : 'Next'
+  $('#fmTitle').textContent = `Install ${f.name}`
+  return new Promise(res => {
+    const show = () => {
+      const s = steps[path.at(-1)]; flagsFrom(path.slice(0, -1))
+      body.innerHTML = `<h3>${esc(at(s.el, 'name') || '')}</h3><div class="fm"><div>${s.groups.map((g, gi) => {
+        const radio = /One$/.test(g.type)
+        return `<fieldset><legend>${esc(g.name || '')}</legend>${g.type === 'SelectAtMostOne' ? `<label><input type="radio" name="g${gi}" value="-1" ${sel.get(g).size ? '' : 'checked'}> None</label>` : ''}${g.plugins.map((pl, pi) => {
+          const t = typeOf(pl), lock = t === 'Required' || t === 'NotUsable' || g.type === 'SelectAll'
+          return `<label data-g="${gi}" data-p="${pi}"><input type="${radio ? 'radio' : 'checkbox'}" name="g${gi}" value="${pi}" ${sel.get(g).has(pl) ? 'checked' : ''} ${lock ? 'disabled' : ''}> ${esc(at(pl, 'name') || '')}${t !== 'Optional' ? ` <small class="muted">${esc(t)}</small>` : ''}</label>`
+        }).join('')}</fieldset>`
+      }).join('')}</div><div id="fmInfo" class="muted">Point at an option to see what it does.</div></div>`
+      $('#fmBack').disabled = path.length < 2
+      nextLabel()
+    }
+    const close = async fn => { dlg.close(); res(await run(fn)) }
+    body.onmouseover = e => {
+      const l = e.target.closest('[data-p]'); if (!l) return
+      const pl = steps[path.at(-1)].groups[l.dataset.g].plugins[l.dataset.p], img = f.images[at(one(pl, 'image'), 'path')]
+      $('#fmInfo').innerHTML = (img ? `<img src="${img}" alt="">` : '') + `<p>${esc(one(pl, 'description')?.textContent.trim() || '')}</p>`
+    }
+    body.onchange = e => {
+      const g = steps[path.at(-1)].groups[+e.target.name.slice(1)], pl = g.plugins[+e.target.value]
+      if (e.target.type === 'radio') sel.set(g, new Set(pl ? [pl] : []))
+      else e.target.checked ? sel.get(g).add(pl) : sel.get(g).delete(pl)
+      nextLabel()
+    }
+    $('#fmBack').onclick = () => { path.pop(); show() }
+    $('#fmNext').onclick = () => {
+      const bad = steps[path.at(-1)].groups.find(g => (g.type === 'SelectAtLeastOne' && !sel.get(g).size) || (g.type === 'SelectExactlyOne' && sel.get(g).size !== 1))
+      if (bad) return toast(`Pick an option in "${bad.name}"`, true)
+      const n = nextStep(path.at(-1))
+      n < 0 ? close(finish) : (enter(n), show())
+    }
+    $('#fmCancel').onclick = () => close(() => api.fomodCancel(pid))
+    dlg.oncancel = e => { e.preventDefault(); $('#fmCancel').click() }
+    show(); dlg.showModal()
+  })
+}
+
+// Options tab extras for non-Minecraft games.
+async function gameExtras() {
+  const lo = await api.loadOrder(cur.id).catch(() => null), tools = cur.tools || []
+  return `<div class="opts">
+    <h4 class="muted">TOOLS <span class="small">(LOOT, xEdit, script extenders…)</span></h4>
+    ${tools.map((t, i) => `<div class="lo"><b>${esc(t.name)}</b><small class="muted">${esc(t.exe)}</small><button data-tool="${i}">${ic('play')} Run</button><button class="icon" data-tooldel="${i}" title="Remove">${ic('trash')}</button></div>`).join('') || '<p class="muted small">No tools added.</p>'}
+    <div class="row"><button type="button" id="toolAdd">${ic('plus')} Add tool</button></div>
+    ${lo ? `<h4 class="muted">PLUGIN LOAD ORDER <span class="small">(written to plugins.txt on Deploy)</span></h4>
+    <div id="loList">${lo.plugins.map((x, i) => `<div class="lo" data-plug="${esc(x.name)}"><input type="checkbox" class="switch" ${x.on ? 'checked' : ''}><b>${esc(x.name)}</b><small class="muted">${esc(x.mod)}</small>
+      <button class="icon" data-lo="-1" title="Up" ${x.master ? 'disabled' : ''}>▲</button><button class="icon" data-lo="1" title="Down" ${x.master ? 'disabled' : ''}>▼</button></div>`).join('') || '<p class="muted small">No plugins in enabled mods.</p>'}</div>
+    ${lo.plugins.length ? `<div class="row"><button type="button" class="primary" id="loSave">${ic('check')} Save load order</button></div>` : ''}<p class="muted small">Masters (.esm/.esl) always load first.</p>` : ''}
+    <h4 class="muted">GAME FOLDER</h4>
+    <div class="row"><button type="button" id="purge">${ic('trash')} Purge mods from game folder</button>${cur.type === 'nexus' ? `<button type="button" id="collOpen">${ic('package')} Browse collections</button>` : ''}</div>
+    <p class="muted small">Purge removes every file this profile deployed. Your mods stay in the list; Deploy puts them back.</p></div>`
+}
+$('#list').addEventListener('click', async e => {
+  const t = e.target.closest('button'); if (!t || tab !== 'options') return
+  const id = cur.id, save = async tools => { const p = await run(() => api.setTools(id, tools)); if (p) setProfile(p), showOptions() }
+  if (t.dataset.tool) run(() => api.runTool(id, +t.dataset.tool))
+  if (t.dataset.tooldel) save((cur.tools || []).filter((_, i) => i !== +t.dataset.tooldel))
+  if (t.id === 'toolAdd') { const exe = await api.openFile(['exe', 'bat', 'cmd']); if (!exe) return; const name = await ask('Tool name', exe.split(/[\\/]/).pop().replace(/\.\w+$/, '')); if (name !== null) { const args = await ask('Arguments (optional)', ''); save([...(cur.tools || []), { name, exe, args: args || '' }]) } }
+  if (t.dataset.lo) { const row = t.closest('.lo'), to = +t.dataset.lo < 0 ? row.previousElementSibling : row.nextElementSibling; if (to?.querySelector('[data-lo]:not([disabled])')) +t.dataset.lo < 0 ? to.before(row) : to.after(row) }
+  if (t.id === 'loSave') { const rows = [...document.querySelectorAll('#loList .lo')]; const p = await run(() => api.setLoadOrder(id, rows.map(r => r.dataset.plug), rows.filter(r => !r.querySelector('input').checked).map(r => r.dataset.plug))); if (p) setProfile(p), toast('Load order saved — Deploy to apply') }
+  if (t.id === 'purge') { const p = await run(() => api.purge(id)); if (p) setProfile(p), toast('Mods removed from the game folder') }
+  if (t.id === 'collOpen') { $('#collQ').value = ''; $('#collDlg').showModal(); collSearch() }
+})
+
+// Nexus collections: browse, then install every file (Premium downloads directly; free accounts get each page opened).
+async function collSearch() {
+  $('#collBody').innerHTML = '<div class="skel"></div>'.repeat(4)
+  const r = await run(() => api.collections(cur.id, $('#collQ').value.trim()))
+  $('#collBody').innerHTML = r ? r.items.map(c => `<div class="coll">${c.tileImage?.url ? `<img src="${esc(c.tileImage.url)}" alt="" loading="lazy">` : '<div class="noicon"></div>'}
+    <div><b>${esc(c.name)}</b><p class="muted small">${esc(c.summary || '')}</p><small class="muted">${c.latestPublishedRevision?.modCount || 0} mods · ${fmt(c.endorsements)} endorsements · ${fmt(c.totalDownloads)} downloads</small></div>
+    <div class="actions"><button class="icon" data-href="https://next.nexusmods.com/${esc(cur.game)}/collections/${esc(c.slug)}" title="Open">${ic('external')}</button><button class="primary" data-coll="${esc(c.slug)}">${ic('download')} Install</button></div></div>`).join('') || '<p class="muted">No collections found.</p>' : ''
+}
+let collTimer
+$('#collQ').oninput = () => { clearTimeout(collTimer); collTimer = setTimeout(collSearch, 400) }
+$('#collBody').onclick = async e => {
+  const b = e.target.closest('[data-coll]'); if (!b) return
+  const c = await run(() => api.collectionMods(b.dataset.coll)); if (!c) return
+  const req = c.mods.filter(m => !m.optional), id = cur.id
+  if (!confirm(`Install ${req.length} required mods from "${c.name}"? Optional mods are skipped. Installers use their default options.`)) return
+  $('#collDlg').close()
+  let ok = 0, fail = []
+  for (const [i, m] of req.entries()) {
+    toast(`Collection: ${i + 1}/${req.length} ${m.name}`)
+    try { let p = await api.install(id, 'nexus', m.modId, m.fileId); if (p.fomod) p = (await fomodWizard(id, p.fomod, true)) || p; setProfile(p); ok++ }
+    catch (err) { fail.push(m); if (/Free Nexus|API key/i.test(err.message)) break }
+  }
+  render()
+  if (fail.length) toast(`${ok} installed, ${req.length - ok} not. Free Nexus accounts must download each file on the website (Mod Manager Download button).`, true)
+  else toast(`Installed ${ok} mods from ${c.name}`)
+}

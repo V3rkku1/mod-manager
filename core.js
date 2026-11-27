@@ -46,13 +46,57 @@ function steamGames() {
 }
 
 // emit(event, data) pushes launcher progress/logs to the UI; encrypt/decrypt protect stored login tokens.
+// Epic Games Store manifests (Windows).
+function epicGames() {
+  const d = 'C:\\ProgramData\\Epic\\EpicGamesLauncher\\Data\\Manifests'
+  try {
+    return fs.readdirSync(d).filter(f => f.endsWith('.item')).flatMap(f => {
+      try { const j = JSON.parse(fs.readFileSync(path.join(d, f), 'utf8')); return j.InstallLocation ? [{ name: j.DisplayName, dir: j.InstallLocation, epic: j.AppName, store: 'Epic' }] : [] } catch { return [] }
+    })
+  } catch { return [] }
+}
+// GOG Galaxy / offline installers register games here (Windows).
+function gogGames() {
+  if (process.platform !== 'win32') return []
+  try {
+    const out = execFileSync('reg', ['query', 'HKLM\\SOFTWARE\\WOW6432Node\\GOG.com\\Games', '/s']).toString()
+    return out.split(/\r?\n\r?\n/).flatMap(b => {
+      const v = k => b.match(new RegExp(`^\\s+${k}\\s+REG_SZ\\s+(.+)$`, 'm'))?.[1]?.trim()
+      return v('path') && v('gameName') ? [{ name: v('gameName'), dir: v('path'), exe: v('exe'), store: 'GOG' }] : []
+    })
+  } catch { return [] }
+}
+const allGames = () => [...steamGames().map(g => ({ ...g, store: 'Steam' })), ...epicGames(), ...gogGames()]
+
+// Where mods go inside the game folder, and which plugins.txt (Bethesda) a game uses. Keyed by Nexus domain; names for other sites.
+const PRESETS = [
+  { domain: 'skyrimspecialedition', name: 'skyrimspecialedition', sub: 'Data', plugins: 'Skyrim Special Edition', star: true },
+  { domain: 'skyrim', name: 'skyrim', sub: 'Data', plugins: 'Skyrim' },
+  { domain: 'fallout4', name: 'fallout4', sub: 'Data', plugins: 'Fallout4', star: true },
+  { domain: 'newvegas', name: 'falloutnewvegas', sub: 'Data', plugins: 'FalloutNV' },
+  { domain: 'fallout3', name: 'fallout3', sub: 'Data', plugins: 'Fallout3' },
+  { domain: 'oblivion', name: 'oblivion', sub: 'Data', plugins: 'Oblivion' },
+  { domain: 'starfield', name: 'starfield', sub: 'Data', plugins: 'Starfield', star: true },
+  { domain: 'stardewvalley', name: 'stardewvalley', sub: 'Mods' },
+  { domain: 'witcher3', name: 'thewitcher3wildhunt', sub: 'Mods' },
+  { domain: 'cyberpunk2077', name: 'cyberpunk2077', sub: '' },
+  { domain: 'mountandblade2bannerlord', name: 'mountbladeiibannerlord', sub: 'Modules' },
+  { domain: 'valheim', name: 'valheim', sub: '' },
+]
+const presetOf = p => PRESETS.find(x => (p.type === 'nexus' && x.domain === p.game) || x.name === norm(p.gameName))
+
 module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } = {}) => {
   fs.mkdirSync(root, { recursive: true })
   const mcl = MC(path.join(root, '..', 'minecraft'))
   const settingsFile = path.join(root, '..', 'settings.json')
   const settings = () => { try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')) } catch { return {} } }
   const dir = id => inside(root, id)
-  const files = p => path.join(dir(p.id), 'files')
+  // Per-mod staging (like Vortex): each mod installed since this version lives in files/<stage>/, so two mods can ship the same file.
+  // Older mods (no m.stage) and shared configs live directly in files/.
+  const files = p => path.join(dir(p.id), 'files', p.__stage || '')
+  const mbase = (p, m) => path.join(dir(p.id), 'files', m?.stage || '')
+  const mf = (p, m, rel) => inside(mbase(p, m), rel)
+  const stageKey = (src, id) => `${src}-${id}`.replace(/[^\w.-]/g, '_').slice(0, 120)
   const load = id => JSON.parse(fs.readFileSync(path.join(dir(id), 'profile.json'), 'utf8'))
   const save = p => (writeAtomic(path.join(dir(p.id), 'profile.json'), JSON.stringify(p, null, 1)), p)
   const ctx = { files, settings, dataDir: path.join(root, '..') }
@@ -72,31 +116,69 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       target: type === 'modrinth' ? path.join(dir(id), 'minecraft') : type === 'terraria' ? tmlDir() || '' : '', mods: [], extra: [], deployed: [] })
   }
 
+  // After unpacking a generic archive into files/<stage>: start a FOMOD installer (returns true) or strip a leading Data/ (or Mods/) folder.
+  function postInstall(p, src, id, mod, stage) {
+    const sdir = path.join(dir(p.id), 'files', stage), sub = presetOf(p)?.sub
+    const xml = mod.files.find(f => /(^|\/)fomod\/moduleconfig\.xml$/i.test(f))
+    if (xml) {
+      const pend = path.join(dir(p.id), 'files', `.fomod-${stage}`)
+      fs.rmSync(pend, { recursive: true, force: true }); fs.renameSync(sdir, pend)
+      p.pendingFomod = { src, id, mod, stage, root: xml.replace(/fomod\/moduleconfig\.xml$/i, '') }
+      save(p)
+      return true
+    }
+    if (sub && mod.files.length && mod.files.every(f => f.toLowerCase().startsWith(sub.toLowerCase() + '/'))) {
+      const tmp = sdir + '.tmp'; fs.renameSync(sdir, tmp); fs.renameSync(path.join(tmp, mod.files[0].slice(0, sub.length)), sdir); fs.rmSync(tmp, { recursive: true, force: true })
+      mod.files = mod.files.map(f => f.slice(sub.length + 1))
+    }
+    return false
+  }
   // Installs a mod (+ required deps) into profile p in place. Returns warnings.
   async function installMod(p, src, id, vid, deps = true, nxm, auto) {
     if (!SOURCES[p.type].includes(src)) throw new Error(`${src} mods can't go in this profile`)
     if (p.mods.some(m => m.id === id)) return []
-    const r = await S[src].install(p, id, vid, nxm)
-    p.mods.push({ ...r.mod, src, ...(r.deps.length ? { deps: r.deps.map(d => d.id) } : {}), ...(r.incompat?.length ? { incompat: r.incompat } : {}), ...(auto ? { auto: true } : {}) }); save(p)
+    const stage = stageKey(src, id)
+    fs.rmSync(path.join(dir(p.id), 'files', stage), { recursive: true, force: true })
+    p.__stage = stage
+    let r
+    try { r = await S[src].install(p, id, vid, nxm) } finally { delete p.__stage }
+    if (['nexus', 'curseforge', 'gamebanana'].includes(src) && p.type !== 'modrinth' && postInstall(p, src, id, r.mod, stage)) return [{ fomod: stage }]
+    p.mods.push({ ...r.mod, src, stage, ...(r.deps.length ? { deps: r.deps.map(d => d.id) } : {}), ...(r.incompat?.length ? { incompat: r.incompat } : {}), ...(auto ? { auto: true } : {}) }); save(p)
     const warns = r.warn ? [r.warn] : []
     if (deps) for (const d of r.deps) warns.push(...await installMod(p, src, d.id, d.vid, true, undefined, true).catch(e => [`Dependency ${d.id}: ${e.message}`]))
     return warns
   }
   const uninstall = (pid, id) => {
     const p = load(pid), m = p.mods.find(m => m.id === id)
-    if (m) for (const f of m.files) remove(files(p), f)
+    if (m?.stage) fs.rmSync(mbase(p, m), { recursive: true, force: true })
+    else if (m) for (const f of m.files) remove(files(p), f)
     p.mods = p.mods.filter(m => m.id !== id)
     return save(p)
   }
   // Install (or switch to) a version; returns the profile with transient warnings.
+  // Adds the FOMOD config (+ referenced images as data URLs) to an install result so the window can show the installer.
+  const fomodOut = p => {
+    const pf = p.pendingFomod
+    p.warn = (p.warn || []).filter(w => !w?.fomod)
+    if (!pf) return p
+    const base = path.join(dir(p.id), 'files', `.fomod-${pf.stage}`)
+    const raw = fs.readFileSync(inside(base, pf.root + pf.mod.files.find(f => /(^|\/)fomod\/moduleconfig\.xml$/i.test(f)).slice(pf.root.length)))
+    const xml = raw[0] === 0xff && raw[1] === 0xfe ? raw.toString('utf16le') : raw[0] === 0xfe && raw[1] === 0xff ? Buffer.from(raw).swap16().toString('utf16le') : raw.toString('utf8')
+    const images = {}
+    for (const m of xml.matchAll(/<image\s+path="([^"]+)"/gi)) {
+      const rel = pf.root + m[1].replace(/\\/g, '/'), f = pf.mod.files.find(x => x.toLowerCase() === rel.toLowerCase())
+      if (f && fs.statSync(inside(base, f)).size < 600e3) images[m[1]] = `data:image/${/\.png$/i.test(f) ? 'png' : 'jpeg'};base64,` + fs.readFileSync(inside(base, f)).toString('base64')
+    }
+    return { ...p, fomod: { stage: pf.stage, name: pf.mod.name, xml: xml.replace(/^\uFEFF/, ''), images } }
+  }
   // Replacing a mod keeps the old files aside until the new version is in, so a failed download never loses the mod.
   const install = async (pid, src, id, vid, nxm, deps = true) => {
     const old = load(pid).mods.find(m => m.id === id)
-    if (!old) { const p = load(pid), warn = await installMod(p, src, id, vid, deps, nxm); return { ...p, warn } }
+    if (!old) { const p = load(pid), warn = await installMod(p, src, id, vid, deps, nxm); return fomodOut({ ...p, warn }) }
     const p0 = load(pid), stash = path.join(dir(pid), '.stash'), moved = []
     fs.rmSync(stash, { recursive: true, force: true })
     for (const f of old.files) {
-      const from = inside(files(p0), f)
+      const from = mf(p0, old, f)
       if (fs.existsSync(from)) { fs.mkdirSync(path.dirname(inside(stash, f)), { recursive: true }); fs.renameSync(from, inside(stash, f)); moved.push(f) }
     }
     save({ ...p0, mods: p0.mods.filter(m => m.id !== id) })
@@ -104,12 +186,17 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       const p = load(pid), warn = await installMod(p, src, id, vid, deps, nxm)
       const m = p.mods.find(m => m.id === id)
       if (m) for (const k of ['disabled', 'pinned', 'note', 'auto']) if (old[k] !== undefined) m[k] = old[k]
+      if (p.pendingFomod) {
+        const keep = path.join(dir(pid), 'files', `.old-${p.pendingFomod.stage}`)
+        fs.rmSync(keep, { recursive: true, force: true }); if (fs.existsSync(stash)) fs.renameSync(stash, keep)
+        p.pendingFomod.old = old; p.pendingFomod.moved = moved
+      }
       save(p)
-      for (const f of moved) if (!m?.files.includes(f)) remove(files(p), f) // tidy empty folders left by the old version
-      return { ...p, warn }
+      if (!old.stage && !p.pendingFomod) for (const f of moved) if (!m?.files.includes(f)) remove(files(p), f) // tidy empty folders left by the old version
+      return fomodOut({ ...p, warn })
     } catch (e) {
       const p = load(pid)
-      for (const f of moved) { fs.mkdirSync(path.dirname(inside(files(p), f)), { recursive: true }); fs.renameSync(inside(stash, f), inside(files(p), f)) }
+      for (const f of moved) { fs.mkdirSync(path.dirname(mf(p, old, f)), { recursive: true }); fs.renameSync(inside(stash, f), mf(p, old, f)) }
       save({ ...p, mods: [...p.mods.filter(m => m.id !== id), old] })
       throw e
     } finally { fs.rmSync(stash, { recursive: true, force: true }) }
@@ -241,15 +328,33 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   }
   const isShaderPack = async data => { try { return Object.keys(unzipSync(data)).some(f => f.startsWith('shaders/')) } catch { return false } }
 
+  const pluginsTxt = pre => path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), pre.plugins, 'Plugins.txt')
   const deployRaw = (id, { vanilla } = {}) => {
     const p = load(id)
     if (!p.target) throw new Error('Set the target folder first')
     for (const f of p.deployed || []) remove(p.target, f)
     const on = vanilla ? [] : p.mods.filter(m => !m.disabled)
-    p.deployed = [...new Set([...on.flatMap(m => m.files), ...(vanilla ? [] : p.extra || [])])]
-    for (const f of p.deployed) {
-      fs.mkdirSync(path.dirname(inside(p.target, f)), { recursive: true })
-      fs.copyFileSync(inside(files(p), f), inside(p.target, f))
+    // Later mods in the list win file conflicts; shared configs (extra) win over everything.
+    const src = new Map()
+    for (const m of on) for (const f of m.files) src.set(f, mf(p, m, f))
+    if (!vanilla) for (const f of p.extra || []) src.set(f, inside(path.join(dir(p.id), 'files'), f))
+    p.deployed = [...src.keys()]
+    const link = settings().deployMode === 'hardlink'
+    for (const [f, from] of src) {
+      const to = inside(p.target, f)
+      fs.mkdirSync(path.dirname(to), { recursive: true })
+      if (link) { try { fs.linkSync(from, to); continue } catch {} } // different drive: fall back to copying
+      fs.copyFileSync(from, to)
+    }
+    // Bethesda games read the plugin load order from %LOCALAPPDATA%/<game>/Plugins.txt.
+    const pre = presetOf(p)
+    if (pre?.plugins && process.platform === 'win32') {
+      const names = on.flatMap(m => m.files.filter(f => !f.includes('/') && /\.(esm|esl|esp)$/i.test(f)))
+      const order = p.loadOrder || [], rank = n => { const i = order.indexOf(n); return i < 0 ? 1e6 : i }, master = n => /\.(esm|esl)$/i.test(n)
+      names.sort((a, b) => (master(b) - master(a)) || rank(a) - rank(b))
+      const off = new Set(p.pluginsOff || [])
+      const lines = names.map(n => pre.star ? `${off.has(n) ? '' : '*'}${n}` : off.has(n) ? null : n).filter(Boolean)
+      try { fs.mkdirSync(path.dirname(pluginsTxt(pre)), { recursive: true }); fs.writeFileSync(pluginsTxt(pre), '# Written by Mod Manager\r\n' + lines.join('\r\n') + '\r\n') } catch {}
     }
     // tModLoader loads only mods listed in Mods/enabled.json.
     if (p.type === 'terraria') write(p.target, 'Mods/enabled.json', JSON.stringify(on.flatMap(m => m.files).filter(f => f.endsWith('.tmod')).map(f => path.basename(f, '.tmod'))))
@@ -363,14 +468,15 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       if (kind === 'profile') {
         // Server-side files only: every jar is looked up on Modrinth by SHA1 (packs, CurseForge and local files too); client-only projects are skipped.
         const on = p.mods.filter(m => !m.disabled)
-        const want = on.flatMap(m => m.files.filter(f => (/^mods\/.+\.jar$/i.test(f) || (m.pack && /^(config|defaultconfigs|kubejs|scripts|datapacks)\//.test(f))) && !m.clientOnly?.includes(f)))
-        const hash = Object.fromEntries(want.filter(f => f.endsWith('.jar')).map(f => [crypto.createHash('sha1').update(fs.readFileSync(inside(files(p), f))).digest('hex'), f]))
+        const wantM = on.flatMap(m => m.files.filter(f => (/^mods\/.+\.jar$/i.test(f) || (m.pack && /^(config|defaultconfigs|kubejs|scripts|datapacks)\//.test(f))) && !m.clientOnly?.includes(f)).map(f => [f, mf(p, m, f)]))
+        const want = wantM.map(([f]) => f), fromOf = Object.fromEntries(wantM)
+        const hash = Object.fromEntries(want.filter(f => f.endsWith('.jar')).map(f => [crypto.createHash('sha1').update(fs.readFileSync(fromOf[f])).digest('hex'), f]))
         const found = Object.keys(hash).length ? await json(`${MR}/version_files`, { 'content-type': 'application/json' }, { method: 'POST', body: JSON.stringify({ hashes: Object.keys(hash), algorithm: 'sha1' }) }).catch(() => ({})) : {}
         const ids = [...new Set(Object.values(found).map(v => v.project_id))], side = {}
         for (let i = 0; i < ids.length; i += 100) for (const x of await json(`${MR}/projects?ids=${q(ids.slice(i, i + 100))}`).catch(() => [])) side[x.id] = x.server_side
         const clientOnly = new Set(Object.entries(found).filter(([, v]) => side[v.project_id] === 'unsupported').map(([h]) => hash[h]))
         fs.rmSync(path.join(sdir, 'mods'), { recursive: true, force: true })
-        for (const f of want) if (!clientOnly.has(f)) write(sdir, f, fs.readFileSync(inside(files(p), f)))
+        for (const f of want) if (!clientOnly.has(f)) write(sdir, f, fs.readFileSync(fromOf[f]))
         if (clientOnly.size) log(`Skipped ${clientOnly.size} client-only mods`)
         s.have = new Set([...Object.values(found).map(v => v.project_id), ...on.map(m => m.id)])
       }
@@ -512,7 +618,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
     'preview', 'checkFollow', 'publish', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
-    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -539,7 +645,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       const LOOK = { theme: v => ['midnight', 'amoled', 'dark', 'light'].includes(v), accent: v => /^#[0-9a-f]{6}$/i.test(v), density: v => ['comfy', 'compact'].includes(v),
         scale: v => v >= 80 && v <= 130, motion: v => typeof v === 'boolean', descs: v => typeof v === 'boolean', rememberLast: v => typeof v === 'boolean' }
       for (const [k, ok] of Object.entries(LOOK)) if (k in patch && !ok(patch[k])) delete patch[k]
-      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'autoStart', 'autoUpdate', 'tunnel', ...Object.keys(LOOK)].filter(k => k in patch)
+      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'autoStart', 'autoUpdate', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
       return setSettingsRaw({ ...Object.fromEntries(pick.map(k => [k, patch[k]])), ...(patch.launch ? { launch: cleanLaunch(patch.launch) } : {}) })
     },
 
@@ -580,10 +686,12 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       let found = p.type === 'modrinth' ? fs.existsSync(minecraftDir()) && minecraftDir() : p.type === 'terraria' ? tmlDir() : null
       if (!found && p.type === 'terraria') throw new Error('tModLoader folder not found — start tModLoader once, or pick Documents/My Games/Terraria/tModLoader')
       if (!found) {
-        const games = steamGames(), n = norm(p.gameName || p.game)
+        const games = allGames(), n = norm(p.gameName || p.game)
         found = (games.find(g => norm(g.name) === n) || games.find(g => norm(g.name).includes(n) || n.includes(norm(g.name))))?.dir
+        const sub = presetOf(p)?.sub
+        if (found && sub) found = path.join(found, sub)
       }
-      if (!found) throw new Error(process.platform === 'win32' ? 'Game not found in your Steam libraries — pick the folder manually' : 'Auto-find works on Windows only')
+      if (!found) throw new Error(process.platform === 'win32' ? 'Game not found in Steam, Epic or GOG — pick the folder manually' : 'Auto-find works on Windows only')
       return save({ ...p, target: found })
     },
     launch: (id, { vanilla } = {}) => {
@@ -598,12 +706,111 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       const steamRun = appid => run('explorer.exe', [args ? `steam://run/${appid}//${args}/` : `steam://rungameid/${appid}`])
       if (p.type === 'terraria') return steamRun(1281930)
       const t = path.normalize(p.target || '').toLowerCase()
-      const g = t && steamGames().find(g => (t + path.sep).startsWith(g.dir.toLowerCase() + path.sep))
-      if (!g) throw new Error('Not a Steam game folder — start the game yourself')
+      const g = t && allGames().find(g => (t + path.sep).startsWith(path.normalize(g.dir).toLowerCase() + path.sep))
+      if (!g) throw new Error('Game not found in Steam, Epic or GOG — start it yourself')
+      if (g.epic) return run('explorer.exe', [`com.epicgames.launcher://apps/${encodeURIComponent(g.epic)}?action=launch&silent=true`])
+      if (g.store === 'GOG') return g.exe ? run(g.exe, (args || '').split(/\s+/).filter(Boolean)) : run('explorer.exe', [g.dir])
       steamRun(g.appid)
     },
 
+    // FOMOD: copy the chosen files ({ source, destination, folder }) from the unpacked archive into the mod's own folder.
+    fomodFinish: (pid, stage, picks) => {
+      const p = load(pid), pf = p.pendingFomod
+      if (!pf || pf.stage !== stage) throw new Error('No installer waiting')
+      const pend = path.join(dir(p.id), 'files', `.fomod-${stage}`), out = path.join(dir(p.id), 'files', stage), sub = presetOf(p)?.sub, files = new Set()
+      fs.rmSync(out, { recursive: true, force: true })
+      const norm1 = x => String(x || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+      const strip = d => sub && d.toLowerCase().startsWith(sub.toLowerCase() + '/') ? d.slice(sub.length + 1) : sub && d.toLowerCase() === sub.toLowerCase() ? '' : d
+      const lookup = rel => pf.mod.files.filter(f => f.toLowerCase() === (pf.root + rel).toLowerCase() || f.toLowerCase().startsWith((pf.root + rel).toLowerCase() + '/'))
+      for (const pk of picks) {
+        const srcRel = norm1(pk.source), dest = strip(norm1(pk.destination ?? (pk.folder ? '' : srcRel)))
+        for (const f of lookup(srcRel)) {
+          const inner = f.slice((pf.root + srcRel).length).replace(/^\//, '')
+          const to = pk.folder ? (dest ? `${dest}/${inner}` : inner) : (dest || path.basename(f))
+          if (!to) continue
+          write(out, to, fs.readFileSync(inside(pend, f))); files.add(to)
+        }
+      }
+      fs.rmSync(pend, { recursive: true, force: true }); fs.rmSync(path.join(dir(p.id), 'files', `.old-${stage}`), { recursive: true, force: true })
+      const mod = { ...pf.mod, src: pf.src, stage, files: [...files], fomod: picks.length }
+      for (const k of ['disabled', 'pinned', 'note']) if (pf.old?.[k] !== undefined) mod[k] = pf.old[k]
+      return save({ ...p, pendingFomod: undefined, mods: [...p.mods.filter(m => m.id !== pf.id), mod] })
+    },
+    fomodCancel: pid => {
+      const p = load(pid), pf = p.pendingFomod
+      if (!pf) return p
+      fs.rmSync(path.join(dir(p.id), 'files', `.fomod-${pf.stage}`), { recursive: true, force: true })
+      const keep = path.join(dir(p.id), 'files', `.old-${pf.stage}`)
+      if (pf.old) for (const f of pf.moved || []) { const to = mf(p, pf.old, f); fs.mkdirSync(path.dirname(to), { recursive: true }); fs.renameSync(inside(keep, f), to) }
+      fs.rmSync(keep, { recursive: true, force: true })
+      return save({ ...p, pendingFomod: undefined, mods: pf.old ? [...p.mods.filter(m => m.id !== pf.id), pf.old] : p.mods })
+    },
+
+    // Bethesda load order: plugins (.esm/.esl/.esp) from enabled mods; written to plugins.txt on deploy.
+    loadOrder: pid => {
+      const p = load(pid), pre = presetOf(p)
+      if (!pre?.plugins) return null
+      const have = p.mods.filter(m => !m.disabled).flatMap(m => m.files.filter(f => !f.includes('/') && /\.(esm|esl|esp)$/i.test(f)).map(f => ({ name: f, mod: m.name })))
+      const order = p.loadOrder || [], rank = n => { const i = order.indexOf(n); return i < 0 ? 1e6 : i }
+      const master = n => /\.(esm|esl)$/i.test(n)
+      have.sort((a, b) => (master(b.name) - master(a.name)) || rank(a.name) - rank(b.name))
+      return { plugins: have.map(x => ({ ...x, on: !(p.pluginsOff || []).includes(x.name), master: master(x.name) })), file: pluginsTxt(pre) }
+    },
+    setLoadOrder: (pid, order, off) => {
+      const p = load(pid)
+      return save({ ...p, loadOrder: order.map(String).slice(0, 5000), pluginsOff: (off || []).map(String) })
+    },
+
+    // Custom tools (xEdit, LOOT, SKSE loader, …) per profile.
+    setTools: (pid, tools) => save({ ...load(pid), tools: (tools || []).slice(0, 20).map(t => ({ name: String(t.name).slice(0, 40), exe: String(t.exe), args: String(t.args || '').slice(0, 500) })) }),
+    runTool: (pid, i) => {
+      const t = load(pid).tools?.[i]
+      if (!t || !fs.existsSync(t.exe)) throw new Error('Tool not found — check its path')
+      spawn(t.exe, t.args.split(/\s+/).filter(Boolean), { cwd: path.dirname(t.exe), detached: true, stdio: 'ignore' }).unref()
+      return true
+    },
+
+    // Nexus Collections: browse + list the files of the latest revision (installing goes through the normal Nexus install).
+    collections: async (pid, text = '', page = 1) => {
+      const p = load(pid)
+      if (p.type !== 'nexus') throw new Error('Collections are for Nexus Mods profiles')
+      const f = { gameDomain: [{ value: p.game, op: 'EQUALS' }], adultContent: [{ value: false, op: 'EQUALS' }], ...(text ? { name: [{ value: text, op: 'WILDCARD' }] } : {}) }
+      const r = await json('https://api.nexusmods.com/v2/graphql', { 'content-type': 'application/json' }, { method: 'POST', body: JSON.stringify({
+        query: 'query($f:CollectionsSearchFilter,$o:Int){collectionsV2(count:20,offset:$o,filter:$f,sort:[{endorsements:{direction:DESC}}]){totalCount nodes{name slug summary tileImage{url} endorsements totalDownloads latestPublishedRevision{modCount}}}}',
+        variables: { f, o: (page - 1) * 20 } }) })
+      if (r.errors) throw new Error(r.errors[0].message)
+      return { pages: Math.ceil(r.data.collectionsV2.totalCount / 20), items: r.data.collectionsV2.nodes }
+    },
+    collectionMods: async slug => {
+      if (!/^\w+$/.test(slug)) throw new Error('Bad collection')
+      const r = await json('https://api.nexusmods.com/v2/graphql', { 'content-type': 'application/json' }, { method: 'POST', body: JSON.stringify({
+        query: 'query($s:String!){collection(slug:$s,viewAdultContent:false){name latestPublishedRevision{revisionNumber modFiles{optional fileId file{modId name version mod{name}}}}}}', variables: { s: slug } }) })
+      if (r.errors) throw new Error(r.errors[0].message)
+      const c = r.data.collection
+      return { name: c.name, revision: c.latestPublishedRevision.revisionNumber, mods: c.latestPublishedRevision.modFiles.map(m => ({ modId: String(m.file.modId), fileId: String(m.fileId), name: m.file.mod?.name || m.file.name, version: m.file.version, optional: m.optional })) }
+    },
+    endorse: async (pid, id) => {
+      const p = load(pid), m = p.mods.find(m => m.id === id), key = settings().nexusKey
+      if (p.type !== 'nexus' || !key) throw new Error('Needs a Nexus profile and your Nexus API key')
+      await json(`https://api.nexusmods.com/v1/games/${q(p.game)}/mods/${q(id)}/endorse.json`, { apikey: key, 'content-type': 'application/json' }, { method: 'POST', body: JSON.stringify({ version: m?.version || '' }) })
+      return save({ ...p, mods: p.mods.map(x => x.id === id ? { ...x, endorsed: true } : x) })
+    },
+
     // ---- Mod management extras ----
+    // Move a mod so it loads after (wins over) another; order in the list = conflict priority.
+    moveMod: (pid, id, afterId) => {
+      const p = load(pid), m = p.mods.find(m => m.id === id)
+      if (!m) throw new Error('Mod not installed')
+      const rest = p.mods.filter(x => x.id !== id), i = rest.findIndex(x => x.id === afterId)
+      rest.splice(i < 0 ? rest.length : i + 1, 0, m)
+      return save({ ...p, mods: rest })
+    },
+    // Remove everything this profile put into the game folder (like Vortex "Purge").
+    purge: id => {
+      const p = load(id)
+      for (const f of p.deployed || []) remove(p.target, f)
+      return save({ ...p, deployed: [] })
+    },
     updateMod: (pid, id, patch) => {
       const p = load(pid), m = p.mods.find(m => m.id === id)
       if (m && 'pinned' in patch) m.pinned = !!patch.pinned || undefined
@@ -618,8 +825,8 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     // Same file written by two enabled mods, or Modrinth "incompatible" pairs.
     conflicts: pid => {
       const p = load(pid), on = p.mods.filter(m => !m.disabled), owner = {}, out = []
-      for (const m of on) for (const f of m.files) (owner[f] ||= []).push(m.name)
-      for (const [file, names] of Object.entries(owner)) if (names.length > 1 && !/\/config\//i.test(`/${file}`)) out.push({ type: 'file', file, mods: names })
+      for (const m of on) for (const f of m.files) (owner[f] ||= []).push(m)
+      for (const [file, ms] of Object.entries(owner)) if (ms.length > 1 && !/\/config\//i.test(`/${file}`)) out.push({ type: 'file', file, mods: ms.map(m => m.name), ids: ms.map(m => m.id), winner: ms.at(-1).name })
       for (const m of on) for (const bad of m.incompat || []) { const o = on.find(x => x.id === bad); if (o) out.push({ type: 'incompatible', mods: [m.name, o.name] }) }
       return out
     },
@@ -1054,22 +1261,31 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     addLocal: async (pid, paths) => {
       const p = load(pid)
       for (const file of paths) {
-        const name = path.basename(file), data = fs.readFileSync(file), out = []
+        const name = path.basename(file), data = fs.readFileSync(file), out = [], stage = stageKey('local', name)
+        fs.rmSync(path.join(dir(p.id), 'files', stage), { recursive: true, force: true })
+        p.__stage = stage
         let rel
         if (p.type === 'modrinth') {
           rel = /\.jar$/i.test(name) ? `mods/${name}` : /\.mrpack$/i.test(name) ? null : (await isShaderPack(data)) ? `shaderpacks/${name}` : `resourcepacks/${name}`
           if (/\.mrpack$/i.test(name)) {
             const r = await S.modrinth.installPackData(p, unzipSync(data), { id: `local:${name}`, name: name.replace(/\.mrpack$/i, ''), version: 'local' })
-            p.mods = p.mods.filter(m => m.id !== r.mod.id); p.mods.push({ ...r.mod, src: 'local' }); continue
+            delete p.__stage; p.mods = p.mods.filter(m => m.id !== r.mod.id); p.mods.push({ ...r.mod, src: 'local', stage }); continue
           }
           write(files(p), rel, data); out.push(rel)
         } else if (p.type === 'terraria' && /\.tmod$/i.test(name)) {
           rel = `Mods/${name}`; write(files(p), rel, data); out.push(rel)
         } else if (p.type === 'thunderstore' && /\.dll$/i.test(name)) {
           rel = `BepInEx/plugins/${name}`; write(files(p), rel, data); out.push(rel)
-        } else for (const [r, d] of Object.entries(await require('./lib').extract(name, data))) write(files(p), r, d), out.push(r)
+        } else {
+          for (const [r, d] of Object.entries(await require('./lib').extract(name, data))) write(files(p), r, d), out.push(r)
+          delete p.__stage
+          const mod = { id: `local:${name}`, name: name.replace(/\.(zip|7z|rar)$/i, ''), version: 'local', files: out }
+          if (p.type !== 'modrinth' && postInstall(p, 'local', mod.id, mod, stage)) return fomodOut(load(p.id))
+          p.mods = p.mods.filter(m => m.id !== mod.id); p.mods.push({ ...mod, src: 'local', stage }); continue
+        }
+        delete p.__stage
         p.mods = p.mods.filter(m => m.id !== `local:${name}`)
-        p.mods.push({ id: `local:${name}`, src: 'local', name, version: 'local', files: out })
+        p.mods.push({ id: `local:${name}`, src: 'local', name, version: 'local', files: out, stage })
       }
       return save(p)
     },
@@ -1084,7 +1300,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
           const f = (await json(`${MR}/version/${q(m.vid)}`)).files.find(f => f.primary) || {}
           if (f.url) { list.push({ path: m.files[0], hashes: f.hashes, downloads: [f.url], fileSize: f.size }); continue }
         }
-        for (const rel of m.files) zip[`overrides/${rel}`] = fs.readFileSync(inside(files(p), rel))
+        for (const rel of m.files) zip[`overrides/${rel}`] = fs.readFileSync(mf(p, m, rel))
       }
       for (const [rel, data] of Object.entries(configs(p))) zip[`overrides/${rel}`] = data
       const lv = p.mc.loaderVersion || await mcl.latestLoader(p.mc.version, p.mc.loader)
@@ -1103,8 +1319,9 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         const d = index.dependencies || {}
         const loader = d['fabric-loader'] ? 'fabric' : d['quilt-loader'] ? 'quilt' : d.neoforge ? 'neoforge' : d.forge ? 'forge' : 'vanilla'
         const p = create({ name: name || index.name, type: 'modrinth', mc: { version: d.minecraft, loader, loaderVersion: d[{ fabric: 'fabric-loader', quilt: 'quilt-loader' }[loader] || loader] } })
-        const r = await S.modrinth.installPackData(p, zip, { id: `local:${path.basename(src)}`, name: index.name, version: index.versionId || 'local' })
-        p.mods.push({ ...r.mod, src: 'local' })
+        const stage = stageKey('local', path.basename(src)); p.__stage = stage
+        const r = await S.modrinth.installPackData(p, zip, { id: `local:${path.basename(src)}`, name: index.name, version: index.versionId || 'local' }).finally(() => delete p.__stage)
+        p.mods.push({ ...r.mod, src: 'local', stage })
         return { profile: save(p), failed: [] }
       }
       const has = f => fs.existsSync(path.join(src, f)), read = f => JSON.parse(fs.readFileSync(path.join(src, f), 'utf8'))
@@ -1129,9 +1346,9 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       const p = create({ name: name || path.basename(src), type: 'modrinth', mc: { version: mc, loader, loaderVersion: lv } })
       const modsDir = path.join(gameDir, 'mods')
       for (const f of fs.existsSync(modsDir) ? fs.readdirSync(modsDir).filter(f => /\.jar(\.disabled)?$/i.test(f)) : []) {
-        const n = f.replace(/\.disabled$/i, ''), rel = `mods/${n}`
-        write(files(p), rel, fs.readFileSync(path.join(modsDir, f)))
-        p.mods.push({ id: `local:${n}`, src: 'local', name: n, version: 'local', files: [rel], disabled: f.endsWith('.disabled') || undefined })
+        const n = f.replace(/\.disabled$/i, ''), rel = `mods/${n}`, stage = stageKey('local', n)
+        write(path.join(dir(p.id), 'files', stage), rel, fs.readFileSync(path.join(modsDir, f)))
+        p.mods.push({ id: `local:${n}`, src: 'local', name: n, version: 'local', files: [rel], stage, disabled: f.endsWith('.disabled') || undefined })
       }
       for (const e of fs.readdirSync(gameDir)) if (!['mods', 'logs', 'crash-reports', '.fabric', '.cache'].includes(e))
         fs.cpSync(path.join(gameDir, e), path.join(p.target, e), { recursive: true })

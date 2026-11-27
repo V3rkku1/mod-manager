@@ -13,7 +13,7 @@ const count = dir => fs.existsSync(path.join(tmp, dir)) ? fs.readdirSync(path.jo
   assert(all.pages > aud.pages && aud.pages > 1 && aud.items.every(m => m.tags.includes('Audio')), 'category filter + pages')
   let p = await core.install(ts.id, 'thunderstore', 'notnotnotswipez-MoreCompany')
   assert(p.mods.some(m => m.id === 'BepInEx-BepInExPack'), 'dependency installed')
-  assert(fs.existsSync(path.join(tmp, 'profiles', ts.id, 'files/BepInEx/core/BepInEx.dll')), 'pack layout')
+  assert(fs.existsSync(path.join(tmp, 'profiles', ts.id, 'files', p.mods.find(m => m.id === 'BepInEx-BepInExPack').stage, 'BepInEx/core/BepInEx.dll')), 'pack layout (own staging folder)')
   const d = await core.details(ts.id, 'thunderstore', 'notnotnotswipez-MoreCompany')
   assert(d.body.includes('More Company') && d.versions.length > 3, 'thunderstore details')
   await core.updateProfile(ts.id, { target: path.join(tmp, 'lc') })
@@ -51,7 +51,7 @@ const count = dir => fs.existsSync(path.join(tmp, dir)) ? fs.readdirSync(path.jo
   const keep = (await core.listProfiles()).find(x => x.id === mc.id).mods.find(m => m.id === 'mOgUt4GM')
   await assert.rejects(core.install(mc.id, 'modrinth', 'mOgUt4GM', 'zzzzzzzz'))
   const after = (await core.listProfiles()).find(x => x.id === mc.id).mods.find(m => m.id === 'mOgUt4GM')
-  assert(after && after.vid === keep.vid && fs.existsSync(path.join(tmp, 'profiles', mc.id, 'files', keep.files[0])), 'old version restored after failed update')
+  assert(after && after.vid === keep.vid && fs.existsSync(path.join(tmp, 'profiles', mc.id, 'files', keep.stage || '', keep.files[0])), 'old version restored after failed update')
   // Snapshot + rollback
   const snap = await core.snapshot(mc.id, 'test')
   await core.install(mc.id, 'modrinth', 'gvQqBUqZ')
