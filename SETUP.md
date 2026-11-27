@@ -11,6 +11,7 @@ The app shows the same list under **Settings (gear) → Setup**, with buttons th
 
 | Feature | What to do |
 |---|---|
+| Play without the official launcher or an Azure app ID | Install Prism Launcher (https://prismlauncher.org), open it once and add your Microsoft account, then close it. Play then starts Minecraft through Prism in the background, with no Prism window. A custom install path goes in Settings, Accounts. |
 | Start Minecraft straight from this app | portal.azure.com, then App registrations, then New: "Personal Microsoft accounts only". Under Authentication, set "Allow public client flows" to Yes. Request Minecraft API access at https://aka.ms/mce-reviewappid (Mojang reviews it, which takes days). Then paste the client ID in Settings, Accounts, and press Add Microsoft account. |
 | Stable server address, Bedrock and voice chat | Settings, Accounts, then **Link playit.gg account** (free), and approve it in the browser. |
 | CurseForge mods | Free key from https://console.curseforge.com. Paste it in Settings, Mod sites. |

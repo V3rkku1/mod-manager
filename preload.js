@@ -8,7 +8,7 @@ const names = ['listProfiles', 'createProfile', 'updateProfile', 'deleteProfile'
   'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serverProps', 'setServerProps',
   'serverPlayers', 'playerAction', 'backups', 'backup', 'restoreBackup', 'deleteBackup',
   'setServerKind', 'setServerIcon', 'sha1Url', 'resetPlayer', 'pluginSearch', 'pluginInstall', 'pluginRemove', 'shareLog', 'updateLoader', 'diagnostics',
-  'pickFolder', 'saveFile', 'openFile', 'openFolder', 'openProfileFolder', 'openExternal', 'profilesDir', 'installUpdate', 'titlebar', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'playitUnlink', 'syncStatus', 'setSyncDir', 'syncNow', 'syncPull', 'snapshot', 'snapshots', 'restoreSnapshot', 'changelog', 'setupStatus', 'playOfficial',
+  'pickFolder', 'saveFile', 'openFile', 'openFolder', 'openProfileFolder', 'openExternal', 'profilesDir', 'installUpdate', 'titlebar', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'playitUnlink', 'syncStatus', 'setSyncDir', 'syncNow', 'syncPull', 'snapshot', 'snapshots', 'restoreSnapshot', 'changelog', 'setupStatus', 'playOfficial', 'playPrism',
   'moveMod', 'purge', 'fomodFinish', 'fomodCancel', 'loadOrder', 'setLoadOrder', 'setTools', 'runTool', 'collections', 'collectionMods', 'endorse']
 contextBridge.exposeInMainWorld('api', Object.fromEntries(names.map(n => [n, (...a) => ipcRenderer.invoke(n, ...a)])))
 contextBridge.exposeInMainWorld('platform', process.platform)

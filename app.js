@@ -394,9 +394,11 @@ $('#play').onclick = () => run(async () => {
   const id = cur.id
   if (cur.type !== 'modrinth') { await deploy(); await api.launch(id); return toast('Mods deployed — starting game') }
   if (running.has(id)) return api.stop(id)
-  // No Microsoft account linked yet: open the instance in the official Minecraft Launcher instead.
+  // No Microsoft account linked: play through Prism Launcher (hidden) if installed, else the official Minecraft Launcher.
   if (!(await api.accounts()).length) {
     status[id] = 'Preparing…'; playButton()
+    const viaPrism = await api.playPrism(id).catch(e => { delete status[id]; playButton(); throw e })
+    if (viaPrism) return
     try { const r = await api.playOfficial(id); toast(r.launched ? `Opened Minecraft Launcher — pick "${r.profile}" and press Play` : `Added "${r.profile}" to the Minecraft Launcher`) }
     finally { delete status[id]; playButton() }
     return
@@ -456,7 +458,7 @@ const lookFrom = f => ({ theme: f.elements.theme.value || 'midnight', accent: f.
 async function openSettings(section = 'appearance') {
   const s = await api.getSettings(), f = $('#settingsForm'), el = f.elements
   el.curseforgeKey.value = s.curseforgeKey || ''; el.nexusKey.value = s.nexusKey || ''; el.nxmHandler.checked = !!s.nxmHandler
-  el.msClientId.value = s.msClientId || ''; el.autoStart.checked = !!s.autoStart; el.autoUpdate.checked = s.autoUpdate !== false; el.hardlink.checked = s.deployMode === 'hardlink'; el.rememberLast.checked = s.rememberLast !== false
+  el.msClientId.value = s.msClientId || ''; el.prismPath.value = s.prismPath || ''; el.autoStart.checked = !!s.autoStart; el.autoUpdate.checked = s.autoUpdate !== false; el.hardlink.checked = s.deployMode === 'hardlink'; el.rememberLast.checked = s.rememberLast !== false
   el.githubToken.value = s.githubToken || ''; el.modrinthToken.value = s.modrinthToken || ''; el.maxMem.value = s.launch?.maxMem || ''
   el.theme.value = look.theme; el.density.value = look.density; el.scale.value = look.scale; el.motion.checked = look.motion; el.descs.checked = look.descs
   el.accent.value = look.accent; $('#accentPick').value = look.accent; $('#scaleOut').textContent = look.scale + '%'
@@ -477,7 +479,7 @@ $('#settingsForm').onsubmit = async e => {
   e.preventDefault()
   const f = e.target, el = f.elements, l = lookFrom(f)
   if (await run(() => api.saveSettings({ curseforgeKey: el.curseforgeKey.value.trim(), nexusKey: el.nexusKey.value.trim(), nxmHandler: el.nxmHandler.checked,
-    msClientId: el.msClientId.value.trim(), autoStart: el.autoStart.checked, autoUpdate: el.autoUpdate.checked, deployMode: el.hardlink.checked ? 'hardlink' : 'copy', rememberLast: el.rememberLast.checked,
+    msClientId: el.msClientId.value.trim(), prismPath: el.prismPath.value.trim(), autoStart: el.autoStart.checked, autoUpdate: el.autoUpdate.checked, deployMode: el.hardlink.checked ? 'hardlink' : 'copy', rememberLast: el.rememberLast.checked,
     githubToken: el.githubToken.value.trim(), modrinthToken: el.modrinthToken.value.trim(), launch: { maxMem: el.maxMem.value }, ...l }))) {
     look = l; lookSaved = true; applyLook(look); $('#settingsDlg').close(); toast('Settings saved'); Object.keys(gameCache).forEach(k => delete gameCache[k]); searchCache.clear()
   }
@@ -856,8 +858,10 @@ async function showSetup() {
   $('#setupList').innerHTML = '<div class="skel"></div>'
   const s = await api.setupStatus()
   const items = [
-    { ok: s.minecraftLauncher || s.msLogin, need: true, title: 'Play Minecraft', why: s.msLogin ? 'Signed in with Microsoft: Play starts the game from this app.' : 'Play opens your instance in the official Minecraft Launcher (install it once from minecraft.net).',
+    { ok: s.minecraftLauncher || s.msLogin || s.prism, need: true, title: 'Play Minecraft', why: s.msLogin ? 'Signed in with Microsoft: Play starts the game from this app.' : 'Play opens your instance in the official Minecraft Launcher (install it once from minecraft.net).',
       steps: ['Install the Minecraft Launcher and sign in once'], btn: ['Get the launcher', 'https://www.minecraft.net/download'] },
+    { ok: s.prism || s.msLogin, title: 'Prism Launcher (recommended for playing)', why: 'With Prism installed, Play starts Minecraft through it in the background: no Prism window, and no Microsoft app ID needed.',
+      steps: ['Install Prism Launcher', 'Open it once and add your Microsoft account (Accounts → Add Microsoft)', 'Close Prism, then press Check again'], btn: ['Get Prism Launcher', 'https://prismlauncher.org/download/'], go: 'accounts' },
     { ok: s.msLogin, title: 'Start Minecraft directly from this app (optional)', why: 'Needs your own Microsoft app ID approved by Mojang. Until then Play uses the official launcher.',
       steps: ['portal.azure.com → App registrations → New: "Personal Microsoft accounts only"', 'Authentication → allow public client flows = Yes', 'Request Minecraft access at aka.ms/mce-reviewappid (takes days)', 'Paste the Application (client) ID in Accounts and press Add Microsoft account'], btn: ['Open Azure', 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade'], go: 'accounts' },
     { ok: s.playit, title: 'Stable server address + Bedrock/voice chat (optional)', why: 'Link a free playit.gg account. Without it servers use bore.pub (Java only).', steps: ['Press Link, approve in the browser'], go: 'accounts', goLabel: 'Link playit.gg' },
@@ -910,7 +914,7 @@ api.getSettings().then(s => {
   look = { ...LOOK, ...Object.fromEntries(Object.keys(LOOK).filter(k => s[k] !== undefined).map(k => [k, s[k]])) }
   if (!('accent' in s) && s.theme === 'dark') look.theme = 'midnight' // old default -> new darker default
   applyLook(look); remembering = s.rememberLast !== false
-}).finally(() => refresh().then(() => { if (!$('#settingsDlg').open) api.setupStatus().then(s => { setupLeft = s.minecraftLauncher || s.msLogin ? 0 : 1; render() }).catch(() => {}) }))
+}).finally(() => refresh().then(() => { if (!$('#settingsDlg').open) api.setupStatus().then(s => { setupLeft = s.minecraftLauncher || s.msLogin || s.prism ? 0 : 1; render() }).catch(() => {}) }))
 
 // ---- Bulk actions, orphans, crash helper, download queue ----
 async function bulkAction(kind) {

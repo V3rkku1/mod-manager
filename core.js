@@ -26,6 +26,22 @@ const minecraftDir = () => process.platform === 'win32' ? path.join(process.env.
   : process.platform === 'darwin' ? path.join(os.homedir(), 'Library/Application Support/minecraft')
   : path.join(os.homedir(), '.minecraft')
 
+// Prism Launcher install: { exe, args, data } or null. settings.prismPath (the executable) overrides detection.
+function findPrism(custom) {
+  const h = os.homedir(), env = process.env, ok = f => f && fs.existsSync(f)
+  const portable = exe => fs.existsSync(path.join(path.dirname(exe), 'portable.txt')) ? path.dirname(exe) : null
+  const native = process.platform === 'win32' ? path.join(env.APPDATA || h, 'PrismLauncher')
+    : process.platform === 'darwin' ? path.join(h, 'Library/Application Support/PrismLauncher') : path.join(h, '.local/share/PrismLauncher')
+  const exe = [custom, ...(process.platform === 'win32'
+    ? [env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Programs/PrismLauncher/prismlauncher.exe'), env.ProgramFiles && path.join(env.ProgramFiles, 'PrismLauncher/prismlauncher.exe'), path.join(h, 'scoop/apps/prismlauncher/current/prismlauncher.exe')]
+    : process.platform === 'darwin' ? ['/Applications/Prism Launcher.app/Contents/MacOS/prismlauncher', path.join(h, 'Applications/Prism Launcher.app/Contents/MacOS/prismlauncher')]
+    : ['/usr/bin/prismlauncher', '/usr/local/bin/prismlauncher', path.join(h, '.local/bin/prismlauncher')])].find(ok)
+  if (exe) return { exe, args: [], data: portable(exe) || native }
+  const flat = path.join(h, '.var/app/org.prismlauncher.PrismLauncher/data/PrismLauncher')
+  if (process.platform === 'linux' && fs.existsSync(flat)) return { exe: 'flatpak', args: ['run', 'org.prismlauncher.PrismLauncher'], data: flat }
+  return null
+}
+
 // Steam libraries -> installed games, from libraryfolders.vdf + appmanifest_*.acf (Windows only).
 function steamGames() {
   if (process.platform !== 'win32') return []
@@ -641,7 +657,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
     'preview', 'checkFollow', 'publish', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
-    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -668,7 +684,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       const LOOK = { theme: v => ['midnight', 'amoled', 'dark', 'light'].includes(v), accent: v => /^#[0-9a-f]{6}$/i.test(v), density: v => ['comfy', 'compact'].includes(v),
         scale: v => v >= 80 && v <= 130, motion: v => typeof v === 'boolean', descs: v => typeof v === 'boolean', rememberLast: v => typeof v === 'boolean' }
       for (const [k, ok] of Object.entries(LOOK)) if (k in patch && !ok(patch[k])) delete patch[k]
-      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'autoStart', 'autoUpdate', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
+      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'prismPath', 'autoStart', 'autoUpdate', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
       return setSettingsRaw({ ...Object.fromEntries(pick.map(k => [k, patch[k]])), ...(patch.launch ? { launch: cleanLaunch(patch.launch) } : {}) })
     },
 
@@ -1170,7 +1186,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     // Setup checklist: what still needs doing for every feature to work.
     setupStatus: async () => {
       const s = settings()
-      return { msLogin: readAccounts().length > 0, msClientId: !!s.msClientId, playit: !!playitSecret(),
+      return { prism: !!findPrism(s.prismPath), msLogin: readAccounts().length > 0, msClientId: !!s.msClientId, playit: !!playitSecret(),
         curseforge: !!s.curseforgeKey, nexus: !!s.nexusKey, github: !!s.githubToken, minecraftLauncher: fs.existsSync(path.join(minecraftDir(), 'launcher_profiles.json')) }
     },
 
@@ -1223,7 +1239,50 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     filters: async (pid, src, kind) => S[src].filters ? S[src].filters(load(pid), kind) : {},
     running: () => Object.keys(running),
     getLog: pid => logs[pid] || [],
-    stop: pid => { if (running[pid]) running[pid].stopped = true, running[pid].child?.kill(); return true },
+    stop: pid => {
+      const r = running[pid]; if (!r) return true
+      r.stopped = true
+      // Prism starts the game as its child: kill the whole tree on Windows.
+      if (r.prism && r.child) process.platform === 'win32' ? spawn('taskkill', ['/pid', String(r.child.pid), '/T', '/F']) : process.kill(-r.child.pid)
+      else r.child?.kill()
+      return true
+    },
+
+    // Play through Prism Launcher with no Prism window: Prism does the Microsoft login, Java and game files.
+    // The Prism instance's game folder is a link to this profile's folder, so mods, worlds and configs stay shared.
+    // Returns null when Prism isn't installed (the caller falls back to the official launcher).
+    playPrism: async pid => {
+      const pr = findPrism(settings().prismPath)
+      if (!pr) return null
+      if (running[pid]) throw new Error('Already running')
+      let p = load(pid)
+      if (p.type !== 'modrinth') throw new Error('Only Minecraft profiles')
+      const me = running[pid] = { preparing: true, prism: true }
+      try {
+        emit('status', { pid, text: 'Preparing…' })
+        p = await serialDeploy(pid)
+        const lv = p.mc.loader === 'vanilla' ? null : p.mc.loaderVersion || await mcl.latestLoader(p.mc.version, p.mc.loader)
+        const cfgFile = path.join(pr.data, 'prismlauncher.cfg')
+        const instRoot = path.resolve(pr.data, (fs.existsSync(cfgFile) && fs.readFileSync(cfgFile, 'utf8').match(/^InstanceDir=(.+)$/m)?.[1].trim()) || 'instances')
+        const id = `mm-${pid}`.replace(/[^\w-]/g, ''), inst = path.join(instRoot, id), game = path.join(inst, 'minecraft')
+        fs.mkdirSync(inst, { recursive: true }); fs.mkdirSync(p.target, { recursive: true })
+        if (!fs.existsSync(game)) fs.symlinkSync(p.target, game, 'junction')
+        const uid = { fabric: 'net.fabricmc.fabric-loader', quilt: 'org.quiltmc.quilt-loader', forge: 'net.minecraftforge', neoforge: 'net.neoforged' }[p.mc.loader]
+        // Prism adds the components these need (intermediary mappings, LWJGL) by itself.
+        writeAtomic(path.join(inst, 'mmc-pack.json'), JSON.stringify({ formatVersion: 1, components: [{ uid: 'net.minecraft', version: p.mc.version, important: true },
+          ...(uid && lv ? [{ uid, version: lv }] : [])] }, null, 1))
+        const mem = p.launch?.maxMem || settings().launch?.maxMem || 4096
+        writeAtomic(path.join(inst, 'instance.cfg'), ['[General]', 'ConfigVersion=1.2', 'InstanceType=OneSix', `name=${p.name.replace(/[\r\n]/g, ' ')}`, 'iconKey=default',
+          'OverrideConsole=true', 'ShowConsole=false', 'AutoCloseConsole=true', 'ShowConsoleOnError=true', 'OverrideMemory=true', `MaxMemAlloc=${+mem || 4096}`, ''].join('\n'))
+        if (me.stopped) throw new Error('Stopped')
+        const child = me.child = spawn(pr.exe, [...pr.args, '--launch', id], { stdio: 'ignore', detached: process.platform !== 'win32' }) // own process group so Stop ends the game too
+        delete me.preparing
+        emit('status', { pid, text: 'Running' })
+        child.on('error', () => {})
+        child.on('exit', code => { if (running[pid] === me) delete running[pid]; emit('status', { pid, text: null, exit: me.stopped ? 0 : code }) })
+        return { prism: pr.exe }
+      } catch (e) { if (running[pid] === me) delete running[pid]; emit('status', { pid, text: null }); throw e }
+    },
 
     // Prepare (download game, loader, Java), deploy mods into the instance folder and start Minecraft.
     play: async (pid, quickPlay = {}, { vanilla } = {}) => {
