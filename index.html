@@ -68,6 +68,8 @@
         <button data-tab="logs" class="mcOnly"><svg class="i"><use href="#i-terminal"/></svg> Logs</button>
         <button data-tab="server" class="mcOnly"><svg class="i"><use href="#i-server"/></svg> Server</button>
         <button data-tab="options"><svg class="i"><use href="#i-sliders"/></svg> Options</button>
+        <button data-tab="lxprojects" class="lxOnly"><svg class="i"><use href="#i-package"/></svg> Projects <em id="lxCount"></em></button>
+        <button data-tab="lxsettings" class="lxOnly"><svg class="i"><use href="#i-sliders"/></svg> Settings</button>
       </div>
       <div id="foot">
         <div class="target">
@@ -107,6 +109,7 @@
       </header>
       <div id="chips" hidden></div>
       <section id="list"></section>
+      <section id="lxList"></section>
     </main>
 
     <div id="empty">
@@ -169,13 +172,6 @@
   <label class="tsOnly">CODE WITH CONFIGS <span class="muted">(also works in r2modman)</span>
     <div class="codebox"><input id="r2code" readonly placeholder="Uploads your config files to Thunderstore"><button id="makeR2"><svg class="i"><use href="#i-up"/></svg> Create</button><button class="primary" data-copy="r2code" hidden><svg class="i"><use href="#i-copy"/></svg> Copy</button></div></label>
   <button id="saveFile"><svg class="i"><use href="#i-file"/></svg> Save as file (mods + configs)</button>
-</dialog>
-
-<dialog id="lxDlg" class="wide">
-  <button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
-  <h2 id="lxTitle">GTA 6</h2>
-  <p class="muted center">Launcher-X: downloads GitHub projects with git, updates and builds them, then runs them. Each job opens its own PowerShell window.</p>
-  <div id="lxBody"></div>
 </dialog>
 
 <dialog id="settingsDlg">
