@@ -304,6 +304,8 @@ button.stop:hover { background: #a12828; }
 .opts label.check { display: flex; }
 #play { min-width: 0; overflow: hidden; }
 #pplay { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* While preparing, Play takes the whole row so the progress text fits. */
+#foot .row:has(#pplay) #deploy { display: none; }
 #title { white-space: nowrap; }
 #chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px 0; }
 #chips[hidden] { display: none; }
