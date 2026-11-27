@@ -1515,13 +1515,18 @@ $('#collBody').onclick = async e => {
 // ---- Launcher-X built in: clone / update / build / run GitHub projects in a PowerShell console ----
 let lxEdit = null // project name being edited, '' for a new one
 const lxBusy = new Set(), lxLogs = {}, lxOpen = new Map(), lxNew = {} // running jobs, their log lines, the open panel per project, new commits
+// What a running job is doing, read from its log: shown on the card and the Play bar.
+const lxPhase = {}, PHASES = [[/Cloning into|Receiving objects|Resolving deltas/, 'Downloading'], [/Updating [0-9a-f]+\.\.|Fast-forward|Already up to date/, 'Updating'],
+  [/Compiling|Building|Linking|Finished/, 'Building'], [/Streamline|DLSS|Downloading|nuget/i, 'Getting files'], [/preload|warm|shader/i, 'Preparing shaders']]
 function lxEvent(e, d) {
   if (e === 'lxlog') {
+    const ph = PHASES.find(([re]) => re.test(d.line))?.[1], n = /Compiling/.test(d.line) ? (lxLogs[d.name] || []).filter(l => /Compiling/.test(l)).length + 1 : 0
+    if (ph) { lxPhase[d.name] = ph === 'Building' && n ? `Building · ${n} parts` : ph; document.querySelectorAll(`#lxList .lxp[data-name="${CSS.escape(d.name)}"] .lxphase, #lxList [data-lx=playbar]`).forEach(x => x.lastChild.textContent = ` ${lxPhase[d.name]}…`) }
     (lxLogs[d.name] ||= []).push(d.line); if (lxLogs[d.name].length > 1000) lxLogs[d.name].shift()
     const pre = document.querySelector(`#lxList .lxlog[data-for="${CSS.escape(d.name)}"]`)
     if (pre) { const end = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20; pre.textContent += (pre.textContent ? '\n' : '') + d.line; if (end) pre.scrollTop = pre.scrollHeight }
   }
-  if (e === 'lxjob') { if (d.busy) lxBusy.add(d.name), lxLogs[d.name] = []; else lxBusy.delete(d.name); if (lxView && tab === 'lxprojects') drawLx() }
+  if (e === 'lxjob') { if (d.busy) lxBusy.add(d.name), lxLogs[d.name] = [], lxPhase[d.name] = 'Starting'; else lxBusy.delete(d.name); if (lxView && tab === 'lxprojects') drawLx() }
 }
 // Every 3 hours: tell about new commits in the recomps (only when the instance is added).
 setInterval(async () => {
@@ -1555,20 +1560,23 @@ async function drawLx() {
     <p class="muted small">Projects are recomps: they are downloaded with git, built and run with your game. Builds show their log here; the game opens in its own PowerShell window.</p>
     <div class="row"><button type="button" class="danger" data-lx="hide">${ic('trash')} Remove from the sidebar</button></div>
     <p class="muted small">Removing keeps your projects and downloaded files; add it again with + → Recomps.</p></form>`
-    : `${warn}<div id="lxTools"></div>${c.game ? '' : `<div class="banner warn">${ic('alert')}<div><p>Pick the game exe in <button class="linkish" data-lx="toSettings">Settings</button> before Launch or Prepare shaders.</p></div></div>`}
+    : `${warn}<div id="lxTools"></div>
     ${c.projects.length ? `<div class="lxbar"><select id="lxPick">${c.projects.map(p => `<option ${p.name === (c.last || c.projects[0].name) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
-      <button class="play big" data-lx="playbar">${ic('play')} Play</button></div>` : ''}
+      <button class="play big" data-lx="playbar" ${lxBusy.size ? 'disabled' : ''}>${ic('play')} ${lxBusy.size ? `${esc(lxPhase[[...lxBusy][0]] || 'Working')}…` : 'Play'}</button></div>
+      <p class="muted small lxhint" id="lxHint"></p>` : ''}
     ${c.projects.map(p => { const busy = lxBusy.has(p.name), open = lxOpen.get(p.name), log = lxLogs[p.name] || [], nw = lxNew[p.name]?.list || []
       return `<div class="mod lxp" data-name="${esc(p.name)}"><div class="noicon lxicon">${initials(p.name)}</div>
       <div class="body"><div class="top"><b>${esc(p.name)}</b><span class="tag">${esc(p.branch)}</span><span class="tag lxst">Checking…</span>${p.shaders?.length ? '<span class="tag">Shader prep</span>' : ''}
         ${nw.length ? `<button class="tag upd linkish" data-lx="commits">${nw.length} new commit${nw.length === 1 ? '' : 's'}</button>` : ''}</div>
         <p><a data-href="${esc(p.repo)}" title="Open on GitHub">${esc(p.repo.replace(/^https:\/\/github\.com\//, ''))}</a><span class="lxrel"></span></p></div>
-      <div class="actions">${busy ? `<button class="prep" disabled>${ic('refresh', 'i spin')} Working…</button><button class="stop" data-lx="stop">${ic('stop')} Stop</button>`
-        : `<button class="play" data-lx="launch">${ic('play')} Launch</button>
-        <button data-lx="update" title="Pull and build">${ic('refresh')}</button><button data-lx="rebuild" title="Rebuild">${ic('wrench')}</button>
-        ${p.shaders?.length ? `<button data-lx="shaders" title="Prepare shaders: build if needed, then compile the game's shaders ahead so the first start doesn't stutter">${ic('flame')}</button>` : ''}`}
-        <button class="icon ${open === 'opts' ? 'on' : ''}" data-lx="opts" title="Play options and disk use">${ic('sliders')}</button>${log.length ? `<button class="icon ${open === 'log' || busy ? 'on' : ''}" data-lx="log" title="Build log">${ic('terminal')}</button>` : ''}
-        <button class="icon" data-lx="folder" title="Open folder">${ic('folder')}</button><button class="icon" data-lx="edit" title="Edit">${ic('pencil')}</button><button class="icon" data-lx="remove" title="Remove">${ic('trash')}</button></div></div>
+      <div class="actions">${busy ? `<button class="prep" disabled>${ic('refresh', 'i spin')} <span class="lxphase">${esc(lxPhase[p.name] || 'Working')}…</span></button><button class="stop" data-lx="stop">${ic('stop')} Stop</button>`
+        : `<button class="play" data-lx="launch">${ic('play')} Launch</button>`}
+        <button class="icon ${open === 'opts' ? 'on' : ''}" data-lx="opts" title="Play options and disk use">${ic('sliders')}</button>
+        <details class="more"><summary class="icon" title="More">⋯</summary><div class="menu">
+          ${busy ? '' : `<button data-lx="update">${ic('refresh')} Update + build</button><button data-lx="rebuild">${ic('wrench')} Rebuild from scratch</button>
+          ${p.shaders?.length ? `<button data-lx="shaders">${ic('flame')} Prepare shaders</button>` : ''}`}
+          ${log.length ? `<button data-lx="log">${ic('terminal')} ${open === 'log' ? 'Hide' : 'Show'} build log</button>` : ''}
+          <button data-lx="folder">${ic('folder')} Open folder</button><button data-lx="edit">${ic('pencil')} Edit commands</button><button data-lx="remove" class="danger">${ic('trash')} Remove</button></div></details></div></div>
       ${busy || open === 'log' ? `<pre class="lxlog" data-for="${esc(p.name)}">${esc(log.slice(-300).join('\n'))}</pre>` : ''}
       ${open === 'commits' ? `<div class="lxpanel" data-for="${esc(p.name)}">${nw.map(x => `<p><code>${esc(x.hash)}</code> ${esc(x.subject)} <span class="muted small">${esc(x.when)}</span></p>`).join('')}
         <div class="row"><button class="primary" data-lx="update">${ic('refresh')} Update + build now</button></div></div>` : ''}
@@ -1590,7 +1598,7 @@ async function drawLx() {
   if (tab === 'lxprojects') api.lxTools().then(all => {
     const miss = all.filter(t => !(c.toolsOk || []).includes(t.id)) // ones you said you have
     if (miss.length && $('#lxTools')) $('#lxTools').innerHTML = `<div class="banner warn">${ic('wrench')}<div><b>Needed to build: ${esc(miss.map(t => t.label).join(', '))}</b>
-      <p>Installs with winget (Windows' own installer) in a PowerShell window. The C++ build tools are several GB and ask for admin rights.</p></div>
+      <p>Installs with winget (Windows' own installer) in a PowerShell window.${miss.some(t => t.id === 'msvc') ? ' The C++ build tools are several GB and ask for admin rights.' : ''}</p></div>
       <button data-lx="toolsok" data-ids="${esc(miss.map(t => t.id).join(','))}" title="Hide this: the tools are installed somewhere the check doesn't look">I have them</button>
       <button data-lx="recheck">Check again</button><button class="primary" data-lx="tools" data-ids="${esc(miss.map(t => t.id).join(','))}">${ic('download')} Install</button></div>`
   }, () => {})
@@ -1603,17 +1611,21 @@ async function drawLx() {
     lxNew[p.name] = { at: Date.now(), list: lxNew[p.name]?.list || [] }
     api.lxCommits(p.name).then(list => { const had = lxNew[p.name].list.length; lxNew[p.name].list = list; if (list.length !== had && lxView && tab === 'lxprojects') drawLx() }, () => {})
   }
+  const say = { 'Not installed': 'Not downloaded yet', 'Up to date': 'Ready', 'Up to date, not built': 'Needs a build', 'Update available': 'Update available',
+    'Update available, not built': 'Update available', 'Offline': 'Ready (offline)', 'Offline, not built': 'Needs a build', 'git missing': 'Git missing' }
   for (const el of document.querySelectorAll('#lxList .lxp')) api.lxStatus(el.dataset.name).then(t => {
-    const tg = el.querySelector('.lxst'); tg.textContent = t; tg.classList.toggle('upd', /Update|not built/.test(t))
+    const tg = el.querySelector('.lxst'); tg.textContent = say[t] || t; tg.dataset.raw = t; tg.classList.toggle('upd', /Update|not built|Not installed/.test(t)); lxHint()
   }, () => {})
 }
 $('#lxList').addEventListener('change', e => {
+  if (e.target.id === 'lxPick') return lxHint()
   if (e.target.id === 'lxName') return run(() => api.lxSave({ name: e.target.value })).then(c => c && (lxName = c.name, render()))
   const patch = e.target.id === 'lxRoot' ? { root: e.target.value.trim() } : e.target.id === 'lxGame' ? { game: e.target.value.trim() } : e.target.id === 'lxAuto' ? { autoUpdate: e.target.checked } : null
   if (patch) run(() => api.lxSave(patch))
 })
 $('#lxList').addEventListener('click', async e => {
   const b = e.target.closest('[data-lx]'); if (!b) return
+  b.closest('details.more')?.removeAttribute('open')
   const a = b.dataset.lx, name = b.dataset.name || b.closest('[data-name]')?.dataset.name || b.closest('[data-for]')?.dataset.for
   if (a === 'toSettings') { tab = 'lxsettings'; return render() }
   if (a === 'tools' && await run(() => api.lxInstallTools(b.dataset.ids.split(',')))) toast('Installing in a PowerShell window — press Check again when it says Done')
@@ -1635,13 +1647,32 @@ $('#lxList').addEventListener('click', async e => {
     if (await run(() => api.lxRemove(name, del))) drawLx()
   }
 })
+function lxHint() {
+  const h = $('#lxHint'), pick = $('#lxPick')?.value, raw = document.querySelector(`#lxList .lxp[data-name="${CSS.escape(pick || '')}"] .lxst`)?.dataset.raw
+  if (h) h.textContent = raw === 'Not installed' ? 'First Play downloads and builds it: 10–30 minutes the first time, then quick. You can keep using the app meanwhile.'
+    : /not built/.test(raw || '') ? 'Play builds the latest code first (a few minutes), then starts the game.' : ''
+}
 // Launch / Update + Build / Rebuild / Prepare shaders: the build runs here with its log; Launch then opens the game.
 async function lxGo(b, name, a) {
   const steps = { launch: 'launch', update: ['update', 'build'], rebuild: ['build', 'force'], shaders: ['build', 'shaders'] }[a]
+  let c = await api.lxConfig(); const p = c.projects.find(x => x.name === name)
+  // Everything a first start needs, asked here instead of failing later: build tools, then the game exe.
+  const miss = (await api.lxTools().catch(() => [])).filter(t => !(c.toolsOk || []).includes(t.id))
+  if (miss.length) {
+    if (confirm(`${name} needs ${miss.map(t => t.label).join(', ')} to build.\nInstall now? (A PowerShell window installs them; press Play again when it says Done.)`)) await run(() => api.lxInstallTools(miss.map(t => t.id)))
+    return
+  }
+  if ((a === 'launch' || a === 'shaders') && !c.game && [p.run, ...(p.shaders || [])].some(x => x?.includes('{game}'))) {
+    toast('Pick your game executable (for example game_scarlett_master.exe)')
+    const f = await api.openFile(['exe']); if (!f) return
+    c = await run(() => api.lxSave({ game: f })); if (!c) return
+  }
   b.disabled = true
   if (a === 'update') delete lxNew[name] // recheck commits afterwards
   const ok = await run(() => api.lxRun(name, steps))
-  if (ok) toast({ launch: `${name} built — the game opens in a PowerShell window`, update: `${name} is up to date and built`, rebuild: `${name} rebuilt`, shaders: `${name}: shaders prepared` }[a])
+  const msg = ok ? { launch: `${name} built — starting the game`, update: `${name} is up to date and built`, rebuild: `${name} rebuilt`, shaders: `${name}: shaders prepared` }[a] : null
+  if (msg) toast(msg)
+  if (!document.hasFocus()) try { new Notification(lxName, { body: msg || `${name}: it stopped with an error — the log is open`, silent: !msg }) } catch {} // long builds: you may be elsewhere
   if (!ok && !lxBusy.has(name)) lxOpen.set(name, 'log')
   if (lxView) drawLx()
 }
@@ -1656,3 +1687,5 @@ $('#lxList').addEventListener('submit', async e => {
   if (e.target.id !== 'lxForm') return
   if (await run(() => api.lxPut(Object.fromEntries(new FormData(e.target)), lxEdit || undefined))) { lxEdit = null; drawLx(); toast('Project saved') }
 })
+// ⋯ menus close when clicking anywhere else.
+document.addEventListener('click', e => document.querySelectorAll('details.more[open]').forEach(d => d.contains(e.target) || d.removeAttribute('open')))

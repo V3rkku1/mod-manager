@@ -522,3 +522,9 @@ body.lxv #lxList { display: grid; grid-template-columns: minmax(0, 1fr); grid-au
 .lxp .actions .prep { opacity: 1; } .lxp .actions .stop { background: var(--danger); }
 .lxp .top { flex-wrap: wrap; row-gap: 4px; }
 #chgBody section.chg + section.chg { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); } #chgBody menu { position: sticky; bottom: 0; }
+details.more { position: relative; } details.more > summary { list-style: none; cursor: pointer; padding: 6px 10px; border-radius: 6px; color: var(--muted); font-size: 18px; line-height: 1; }
+details.more > summary::-webkit-details-marker { display: none; } details.more[open] > summary, details.more > summary:hover { background: var(--hover); color: var(--text); }
+details.more .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 220px; display: grid; gap: 2px; padding: 6px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+details.more .menu button { justify-content: flex-start; background: none; color: var(--text); padding: 8px 10px; gap: 8px; } details.more .menu button:hover { background: var(--hover); }
+details.more .menu .danger { color: var(--danger); } .lxhint { margin: -2px 2px 0; } .lxhint:empty { display: none; }
+.mod.lxp { content-visibility: visible; } .mod.lxp:has(details.more[open]) { position: relative; z-index: 5; } /* the ⋯ menu may hang over the next card */
