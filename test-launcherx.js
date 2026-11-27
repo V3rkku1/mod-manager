@@ -70,7 +70,8 @@ assert(require('./launcherx')(old).lxConfig().projects[0].run.includes('{args}')
   c = LX.lxConfig(); p = c.projects.find(x => x.name === 'demo')
   const job = (...steps) => { const f = path.join(tmp, 'job.ps1'); fs.writeFileSync(f, '\ufeff' + LX.script(c, p, steps)); return sh(shell, tmp, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', f) }
 
-  if (process.platform === 'win32') { const miss = await LX.lxTools(); assert(Array.isArray(miss) && !miss.some(t => t.id === 'git'), 'tool check: ' + JSON.stringify(miss)) }
+  // The Windows CI runner has Git, Rust, Python and the C++ build tools: none may be reported missing.
+  if (process.platform === 'win32') { const miss = await LX.lxTools(); assert.deepEqual(miss, [], 'tool check: ' + JSON.stringify(miss)) }
   assert.equal(await LX.lxStatus('demo'), 'Not installed')
   assert.equal(job('update', 'build', 'run'), 0); assert.equal(builds(), 1)
   assert.equal(fs.readFileSync(path.join(LX.lxDir('demo'), 'ran.txt'), 'utf8').trim(), c.game, 'run got game path')

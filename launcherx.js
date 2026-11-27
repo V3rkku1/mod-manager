@@ -29,7 +29,7 @@ const defaults = root => ({
 })
 
 // Windows keeps PATH in the registry; a console started from an app gets the app's old copy.
-const PATH_REFRESH = "$m = [Environment]::GetEnvironmentVariable('Path', 'Machine'); if ($m) { $env:Path = $m + ';' + [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path }"
+const PATH_REFRESH = "$m = [Environment]::GetEnvironmentVariable('Path', 'Machine'); if ($m) { $env:Path = $m + ';' + [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path + ';' + (Join-Path $env:USERPROFILE '.cargo\\bin') }" // + rustup's default
 // What the projects need on Windows, and the winget package that installs it (Launcher-X's CheckTools + its README's build tools line).
 const TOOLS = {
   git: { label: 'Git', install: 'winget install -e --id Git.Git' },
@@ -157,6 +157,7 @@ module.exports = (dataDir, emit = () => {}) => {
       if ('autoUpdate' in patch) c.autoUpdate = !!patch.autoUpdate
       if (patch.name?.trim()) c.name = String(patch.name).trim().slice(0, 40)
       if ('enabled' in patch) c.enabled = !!patch.enabled // shown in the left bar (added with + > Recomps)
+      if (Array.isArray(patch.toolsOk)) c.toolsOk = patch.toolsOk.filter(t => TOOLS[t]) // "I have them": not reported as missing
       return save(c)
     },
     // Add or replace (by `was`, the old name) a project.
@@ -230,10 +231,13 @@ module.exports = (dataDir, emit = () => {}) => {
     lxTools: () => new Promise(ok => {
       if (process.platform !== 'win32') return ok([])
       const want = needs(load())
+      // Each tool is run (--version) rather than looked up: Store Python lives in WindowsApps, rustup's cargo may only be in ~\.cargo\bin.
       const ps = [PATH_REFRESH,
-        "foreach ($t in 'git', 'cargo', 'python') { if (Get-Command $t -CommandType Application -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch 'WindowsApps' }) { $t } }",
+        "foreach ($t in 'git', 'cargo', 'python') { try { $o = & $t --version 2>&1 | Out-String; if ($LASTEXITCODE -eq 0 -and $o -match '\\d+\\.\\d+') { $t } } catch {} }",
         '$vw = "${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe"',
-        "if ((Test-Path $vw) -and (& $vw -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)) { 'msvc' }"].join('\n')
+        "$vc = (Test-Path $vw) -and (& $vw -products * -prerelease -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)",
+        "if (-not $vc) { $vc = Get-ChildItem \"${env:ProgramFiles}\\Microsoft Visual Studio\\*\\*\\VC\\Tools\\MSVC\", \"${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\*\\*\\VC\\Tools\\MSVC\" -ErrorAction SilentlyContinue }",
+        "if ($vc) { 'msvc' }"].join('\n')
       execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 60e3 }, (e, out) => {
         const have = new Set(String(out || '').split(/\s+/))
         ok(e ? [] : want.filter(t => !have.has(t)).map(id => ({ id, label: TOOLS[id].label })))

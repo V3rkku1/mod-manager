@@ -1587,9 +1587,11 @@ async function drawLx() {
       <label><span>RUN COMMAND <span class="muted">({game} = game exe)</span></span><input name="run" value="${esc(e.run)}" placeholder=".\\target\\release\\app.exe"></label>
       <div class="row"><button type="button" data-lx="cancel">Cancel</button><button class="primary">${ic('check')} Save project</button></div></form>`
     : `<button type="button" data-lx="add">${ic('plus')} Add project</button>`}`
-  if (tab === 'lxprojects') api.lxTools().then(miss => {
+  if (tab === 'lxprojects') api.lxTools().then(all => {
+    const miss = all.filter(t => !(c.toolsOk || []).includes(t.id)) // ones you said you have
     if (miss.length && $('#lxTools')) $('#lxTools').innerHTML = `<div class="banner warn">${ic('wrench')}<div><b>Needed to build: ${esc(miss.map(t => t.label).join(', '))}</b>
       <p>Installs with winget (Windows' own installer) in a PowerShell window. The C++ build tools are several GB and ask for admin rights.</p></div>
+      <button data-lx="toolsok" data-ids="${esc(miss.map(t => t.id).join(','))}" title="Hide this: the tools are installed somewhere the check doesn't look">I have them</button>
       <button data-lx="recheck">Check again</button><button class="primary" data-lx="tools" data-ids="${esc(miss.map(t => t.id).join(','))}">${ic('download')} Install</button></div>`
   }, () => {})
   if (tab === 'lxprojects') for (const el of document.querySelectorAll('#lxList .lxp')) api.lxLatest(el.dataset.name).then(r => {
@@ -1616,6 +1618,7 @@ $('#lxList').addEventListener('click', async e => {
   if (a === 'toSettings') { tab = 'lxsettings'; return render() }
   if (a === 'tools' && await run(() => api.lxInstallTools(b.dataset.ids.split(',')))) toast('Installing in a PowerShell window — press Check again when it says Done')
   if (a === 'recheck') { b.disabled = true; drawLx() }
+  if (a === 'toolsok') { const c = await api.lxConfig(); await run(() => api.lxSave({ toolsOk: [...new Set([...(c.toolsOk || []), ...b.dataset.ids.split(',')])] })); drawLx() }
   if (a === 'hide' && confirm(`Remove ${lxName} from the sidebar?`)) { await run(() => api.lxSave({ enabled: false })); lxOn = lxView = false; tab = 'browse'; return render() }
   if (a === 'pickRoot') { const d = await api.pickFolder(); if (d) await run(() => api.lxSave({ root: d })), drawLx() }
   if (a === 'pickGame') { const f = await api.openFile(['exe']); if (f) await run(() => api.lxSave({ game: f })), drawLx() }
