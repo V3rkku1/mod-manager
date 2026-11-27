@@ -235,7 +235,7 @@ $('#list').onclick = async e => {
   const bk = e.target.closest('[data-bulk]')?.dataset.bulk
   if (bk) return bulkAction(bk)
   if (e.target.id === 'syncFollow') return run(async () => { e.target.disabled = true; const r = await api.sync(cur.id, `gist:${cur.follow.gist}`, { remove: true }); setProfile(r.profile); render(); toast(r.failed.length ? `Synced, ${r.failed.length} failed` : 'Synced with your friend', !!r.failed.length) })
-  const el = e.target.closest('.mod'); if (!el) return
+  const el = e.target.closest('.mod'); if (!el || tab === 'server') return
   const modId = el.dataset.id, src = el.dataset.src
   if (e.target.closest('.body')) return src !== 'local' && openDetails(src, modId)
   const b = e.target.closest('[data-act]')
@@ -405,7 +405,7 @@ $('#saveFile').onclick = async () => {
 async function openSettings() {
   const s = await api.getSettings(), f = $('#settingsForm')
   f.curseforgeKey.value = s.curseforgeKey || ''; f.nexusKey.value = s.nexusKey || ''; f.nxmHandler.checked = !!s.nxmHandler
-  f.msClientId.value = s.msClientId || ''; f.githubToken.value = s.githubToken || ''; f.modrinthToken.value = s.modrinthToken || ''; f.theme.value = s.theme || 'dark'; f.maxMem.value = s.launch?.maxMem || ''
+  f.msClientId.value = s.msClientId || ''; f.autoStart.checked = !!s.autoStart; f.autoUpdate.checked = s.autoUpdate !== false; f.githubToken.value = s.githubToken || ''; f.modrinthToken.value = s.modrinthToken || ''; f.theme.value = s.theme || 'dark'; f.maxMem.value = s.launch?.maxMem || ''
   $('#login').hidden = true; showAccounts()
   $('#settingsDlg').showModal()
 }
@@ -413,7 +413,7 @@ $('#settingsForm').onsubmit = async e => {
   e.preventDefault()
   const f = e.target
   if (await run(() => api.saveSettings({ curseforgeKey: f.curseforgeKey.value.trim(), nexusKey: f.nexusKey.value.trim(), nxmHandler: f.nxmHandler.checked,
-    msClientId: f.msClientId.value.trim(), githubToken: f.githubToken.value.trim(), modrinthToken: f.modrinthToken.value.trim(), theme: f.theme.value, launch: { maxMem: f.maxMem.value } })))
+    msClientId: f.msClientId.value.trim(), autoStart: f.autoStart.checked, autoUpdate: f.autoUpdate.checked, githubToken: f.githubToken.value.trim(), modrinthToken: f.modrinthToken.value.trim(), theme: f.theme.value, launch: { maxMem: f.maxMem.value } })))
     applyTheme(f.theme.value), $('#settingsDlg').close(), toast('Settings saved'), Object.keys(gameCache).forEach(k => delete gameCache[k])
 }
 
@@ -543,7 +543,7 @@ function appendLog(line) {
 async function showLogs() {
   const files = await run(() => api.logFiles(cur.id)) || []
   $('#list').innerHTML = `<div class="logbar"><select id="logsel"><option value="live">Live game output</option>${files.map(f => `<option value="${esc(f.rel)}">${esc(f.rel)} — ${new Date(f.time).toLocaleString()}</option>`).join('')}</select>
-    <button id="logcopy">${ic('copy')} Copy</button><button id="logdir">${ic('folder')} Folder</button></div><div id="logview"></div>`
+    <button id="logcopy">${ic('copy')} Copy</button><button id="logshare">${ic('share')} Share</button><button id="logdir">${ic('folder')} Folder</button></div><div id="logview"></div>`
   const load = async () => {
     const v = $('#logview'); v.textContent = ''
     const sel = $('#logsel').value
@@ -554,6 +554,10 @@ async function showLogs() {
   $('#logsel').onchange = load
   $('#logcopy').onclick = () => navigator.clipboard.writeText($('#logview').innerText).then(() => toast('Log copied'))
   $('#logdir').onclick = () => api.openProfileFolder(cur.id, 'logs')
+  $('#logshare').onclick = async () => {
+    if (!confirm('Upload the game log to mclo.gs (public link)? Logs can contain your username and paths.')) return
+    const url = await run(() => api.shareLog(cur.id, 'game')); if (url) navigator.clipboard.writeText(url), toast(`Log link copied: ${url}`)
+  }
   load()
 }
 
@@ -758,63 +762,102 @@ function dlUpdate(d) {
 
 // ---- Minecraft server ----
 const appendTo = (v, line) => { if (!v) return; const stick = v.scrollTop + v.clientHeight >= v.scrollHeight - 30; const d = document.createElement('div'); d.textContent = line; d.className = logClass(line); v.append(d); if (stick) v.scrollTop = v.scrollHeight }
-let srvTab = 'console'
+let srvTab = 'console', plugSrc = 'modrinth', selPlayers = new Set()
+const KINDS = { profile: 'This profile (mods)', paper: 'Paper (plugins)', purpur: 'Purpur (plugins)', bedrock: 'Bedrock Dedicated Server' }
+// Minecraft § color codes -> spans (MOTD preview).
+const MC_COLORS = '000000,0000AA,00AA00,00AAAA,AA0000,AA00AA,FFAA00,AAAAAA,555555,5555FF,55FF55,55FFFF,FF5555,FF55FF,FFFF55,FFFFFF'.split(',')
+const motdHtml = s => { const br = t => esc(t).replace(/\\n/g, '<br>'); return String(s).split(/[§&]([0-9a-fk-or])/i).map((part, i, a) => i % 2 ? '' : i ? `<span class="c${a[i - 1].toLowerCase()}">${br(part)}</span>` : br(part)).join('') }
 async function showServer() {
   const id = cur.id, s = await api.serverStatus(id)
   if (cur.id !== id || tab !== 'server') return
-  const o = { maxMem: 2048, port: 25565, online: true, ...s.opts }
+  const o = { maxMem: 2048, port: s.kind === 'bedrock' ? 19132 : 25565, online: true, ...s.opts }, kind = s.kind
   const state = !s.running ? 'Stopped' : s.online ? 'Online' : 'Starting…'
-  const tabs = ['console', 'players', 'settings', 'backups'].map(t => `<button data-stab="${t}" class="${srvTab === t ? 'on' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')
+  const plugins = kind === 'paper' || kind === 'purpur'
+  const tabs = ['console', 'players', ...(plugins ? ['plugins'] : []), 'settings', 'backups', 'help'].map(t => `<button data-stab="${t}" class="${srvTab === t ? 'on' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')
+  if (srvTab === 'plugins' && !plugins) srvTab = 'console'
   $('#list').innerHTML = `<div class="srv">
-    <div class="srvhead"><span class="dot ${s.online ? 'on' : s.running ? 'mid' : ''}"></span><b>${state}</b>
-      ${s.online ? `<span class="muted small">${s.players.length} player${s.players.length === 1 ? '' : 's'} online · since ${new Date(s.since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>` : ''}
+    <div class="srvhead">${s.icon ? `<img class="sicon" src="${s.icon}" alt="">` : ''}<span class="dot ${s.online ? 'on' : s.running ? 'mid' : ''}"></span><b>${state}</b>
+      <span class="tag">${esc(KINDS[kind])}</span>
+      ${s.online ? `<span class="muted small">${s.players.length} player${s.players.length === 1 ? '' : 's'} online · since ${new Date(s.since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>` : '<span class="small"></span>'}
       ${s.running ? `<button id="srvRestart">${ic('refresh')} Restart</button><button id="srvStop" class="danger">${ic('stop')} Stop</button>` : `<button id="srvStart" class="primary">${ic('play')} Start server</button>`}</div>
+    ${!s.running && s.issues.length ? `<div class="banner warn">${ic('alert')}<div><b>The server stopped with problems</b>${s.issues.map(i => `<p>${esc(i)}</p>`).join('')}</div><button id="srvShareLog">${ic('share')} Share log</button></div>` : ''}
     ${s.running ? `<div class="addr">
         <div><small>SAME WI-FI / LAN</small><code>${esc(s.lan || '')}</code><button class="icon" data-copy-text="${esc(s.lan || '')}">${ic('copy')}</button></div>
-        <div><small>ONLINE (FRIENDS ANYWHERE)</small>${s.address ? `<code>${esc(s.address)}</code><button class="icon" data-copy-text="${esc(s.address)}">${ic('copy')}</button>`
-          : `<button id="srvShare" ${s.online ? '' : 'disabled'}>${ic('globe')} Get public address</button>`}</div>
-        ${s.bedrock ? `<div><small>BEDROCK (LAN, UDP)</small><code>${esc(s.bedrock)}</code><button class="icon" data-copy-text="${esc(s.bedrock)}">${ic('copy')}</button></div>` : ''}
+        ${kind === 'bedrock' ? '<div><small>ONLINE</small><span class="muted small">Bedrock uses UDP, which the free tunnel does not carry. Friends outside your network need port forwarding (UDP ' + esc(o.port) + ').</span></div>'
+          : `<div><small>ONLINE (FRIENDS ANYWHERE)</small>${s.address ? `<code>${esc(s.address)}</code><button class="icon" data-copy-text="${esc(s.address)}">${ic('copy')}</button>`
+          : `<button id="srvShare" ${s.online ? '' : 'disabled'}>${ic('globe')} Get public address</button>`}</div>`}
+        ${s.bedrock && kind !== 'bedrock' ? `<div><small>BEDROCK (LAN, UDP)</small><code>${esc(s.bedrock)}</code><button class="icon" data-copy-text="${esc(s.bedrock)}">${ic('copy')}</button></div>` : ''}
         ${s.address ? `<button id="srvInvite" class="primary">${ic('share')} Copy invite link (mods + server)</button>` : ''}</div>` : ''}
     <div class="dtabs stabs">${tabs}</div><div id="spane"></div></div>`
   const pane = $('#spane')
   if (srvTab === 'console') {
     pane.innerHTML = `<div id="slog" class="console">${s.log.map(l => `<div class="${logClass(l)}">${esc(l)}</div>`).join('')}</div>
-      <input id="scmd" placeholder="Type a server command (e.g. time set day) and press Enter" ${s.running ? '' : 'disabled'}>`
+      <div class="row"><input id="scmd" placeholder="Type a server command (e.g. time set day) and press Enter" ${s.running ? '' : 'disabled'}><button id="srvShareLog" class="grow0">${ic('share')} Share log</button></div>`
     $('#slog').scrollTop = $('#slog').scrollHeight
   }
   if (srvTab === 'players') {
-    const pl = await api.serverPlayers(id), btn = (a, n, label, cls = '') => `<button data-pact="${a}" data-name="${esc(n)}" class="${cls}" ${s.running ? '' : 'disabled'}>${label}</button>`
-    const list = (title, names, acts) => `<div class="section"><h4>${title} (${names.length})</h4>${names.map(n => `<div class="acct"><img src="https://mc-heads.net/avatar/${esc(n)}/32" alt=""><b>${esc(n)}</b>${acts(n)}</div>`).join('') || '<p class="muted small">Nobody yet.</p>'}</div>`
-    pane.innerHTML = `${s.running ? '' : '<p class="muted small">Start the server to change players.</p>'}
-      <div class="row addp"><input id="plname" placeholder="Player name" maxlength="16"><button data-padd="allow" ${s.running ? '' : 'disabled'}>Add to whitelist</button><button data-padd="op" ${s.running ? '' : 'disabled'}>Make operator</button></div>
-      ${list('ONLINE', pl.online, n => btn('op', n, 'Op') + btn('kick', n, 'Kick') + btn('ban', n, 'Ban', 'danger'))}
-      ${list('OPERATORS', pl.ops, n => btn('deop', n, 'Remove op'))}
-      ${list('WHITELIST', pl.whitelist, n => btn('disallow', n, 'Remove'))}
-      ${list('BANNED', pl.banned, n => btn('pardon', n, 'Unban'))}`
+    const pl = await api.serverPlayers(id), dis = s.running ? '' : 'disabled'
+    const btn = (a, n, label, cls = '') => `<button data-pact="${a}" data-name="${esc(n)}" class="${cls}" ${dis}>${label}</button>`
+    const row = (n, acts) => `<div class="acct"><input type="checkbox" class="pick" data-psel="${esc(n)}" ${selPlayers.has(n) ? 'checked' : ''}><img src="https://mc-heads.net/avatar/${esc(n)}/32" alt=""><b>${esc(n)}</b>${acts(n)}</div>`
+    const list = (title, names, acts) => `<div class="section"><h4>${title} (${names.length})</h4>${names.map(n => row(n, acts)).join('') || '<p class="muted small">Nobody yet.</p>'}</div>`
+    pane.innerHTML = `${s.running ? '' : '<p class="muted small">Start the server to change players. "Reset data" works while stopped.</p>'}
+      <div class="row addp"><input id="plname" placeholder="Player name" maxlength="16"><button data-padd="allow" ${dis}>Add to ${pl.bedrock ? 'allowlist' : 'whitelist'}</button><button data-padd="op" ${dis}>Make operator</button></div>
+      ${selPlayers.size ? `<div class="bulk"><b>${selPlayers.size} selected</b><button data-pbulk="op" ${dis}>Op</button><button data-pbulk="allow" ${dis}>Whitelist</button><button data-pbulk="kick" ${dis}>Kick</button>
+        ${pl.bedrock ? '' : `<button data-pbulk="ban" ${dis}>Ban</button><button data-pbulk="reset" ${s.running ? 'disabled' : ''}>Reset data</button>`}<button data-pbulk="none" class="icon">Clear</button></div>` : ''}
+      ${list('ONLINE', pl.online, n => btn('op', n, 'Op') + btn('kick', n, 'Kick') + (pl.bedrock ? '' : btn('ban', n, 'Ban', 'danger')))}
+      ${pl.bedrock ? '' : list('OPERATORS', pl.ops, n => btn('deop', n, 'Remove op'))}
+      ${list(pl.bedrock ? 'ALLOWLIST' : 'WHITELIST', pl.whitelist, n => btn('disallow', n, 'Remove'))}
+      ${pl.bedrock ? '' : list('BANNED', pl.banned, n => btn('pardon', n, 'Unban'))}
+      ${pl.bedrock ? '' : list('EVERYONE WHO JOINED', pl.known, n => `<button data-preset="${esc(n)}" ${s.running ? 'disabled' : ''} title="Delete inventory, stats and advancements">Reset data</button>`)}`
+  }
+  if (srvTab === 'plugins') {
+    const installed = s.opts.plugins || []
+    pane.innerHTML = `<div class="section"><h4>INSTALLED PLUGINS (${installed.length})</h4>${installed.map(x => `<div class="acct">${x.icon ? `<img src="${esc(x.icon)}" alt="">` : ''}<b>${esc(x.name)}</b><span class="tag">${esc(x.version)}</span><span class="muted small">${x.src === 'hangar' ? 'Hangar' : 'Modrinth'}</span>
+        <button class="icon" data-prm="${esc(x.id)}" title="Remove">${ic('trash')}</button></div>`).join('') || '<p class="muted small">No plugins yet.</p>'}</div>
+      <div class="row"><select id="plugSrc"><option value="modrinth" ${plugSrc === 'modrinth' ? 'selected' : ''}>Modrinth</option><option value="hangar" ${plugSrc === 'hangar' ? 'selected' : ''}>Hangar (PaperMC)</option></select>
+        <div class="search grow2"><svg class="i"><use href="#i-search"/></svg><input id="plugQ" type="search" placeholder="Search plugins"></div></div>
+      <div id="plugList"></div><p class="muted small">Plugin changes apply after a restart.</p>`
+    pluginSearch()
   }
   if (srvTab === 'settings') {
     const pr = await api.serverProps(id), v = (k, d) => esc(pr[k] ?? d), sel = (k, opts, d) => `<select name="${k}">${opts.map(x => `<option ${String(pr[k] ?? d) === x ? 'selected' : ''}>${x}</option>`).join('')}</select>`
     const tog = (k, label, d) => `<label class="check"><input type="checkbox" class="switch" data-prop="${k}" ${String(pr[k] ?? d) === 'true' ? 'checked' : ''}> ${label}</label>`
+    const bedrock = kind === 'bedrock', ram = s.ram
     pane.innerHTML = `<form class="opts" id="srvForm"><h4 class="muted">STARTUP</h4>
-        <div class="row"><label>MEMORY (MB)<input name="maxMem" type="number" min="1024" step="512" value="${+o.maxMem}"></label>
-        <label>PORT<input name="port" type="number" min="1024" max="65535" value="${+o.port}"></label></div>
+        <label>SERVER TYPE<select name="kind" id="srvKind" ${s.running ? 'disabled' : ''}>${Object.entries(KINDS).map(([k, l]) => `<option value="${k}" ${kind === k ? 'selected' : ''}>${l}${k === 'profile' ? ` — ${esc(cur.mc.loader)} ${esc(cur.mc.version)}` : ''}</option>`).join('')}</select></label>
+        ${bedrock ? '' : `<label>MEMORY <span id="memOut">${(o.maxMem / 1024).toFixed(1)} GB</span><input name="maxMem" type="range" min="1024" max="${Math.max(2048, ram - 1024)}" step="512" value="${+o.maxMem}" id="memRange"></label>`}
+        <div class="row"><label>PORT<input name="port" type="number" min="1024" max="65535" value="${+o.port}"></label>
+          <label>BACKUP EVERY<select name="backupEvery">${[0, 1, 3, 6, 12, 24].map(h => `<option value="${h}" ${+o.backupEvery === h ? 'selected' : ''}>${h ? `${h} hour${h > 1 ? 's' : ''}` : 'Never'}</option>`).join('')}</select></label>
+          <label>RESTART EVERY<select name="restartEvery">${[0, 6, 12, 24].map(h => `<option value="${h}" ${+o.restartEvery === h ? 'selected' : ''}>${h ? `${h} hours` : 'Never'}</option>`).join('')}</select></label></div>
         <label class="check"><input type="checkbox" name="online" class="switch" ${o.online ? 'checked' : ''}> Only real Minecraft accounts (online mode)</label>
-        <label class="check"><input type="checkbox" name="geyser" class="switch" ${o.geyser ? 'checked' : ''}> Let Bedrock players join (Geyser + Floodgate, Fabric/NeoForge)</label>
+        ${bedrock ? '' : `<label class="check"><input type="checkbox" name="geyser" class="switch" ${o.geyser ? 'checked' : ''}> Let Bedrock players join (Geyser + Floodgate)</label>`}
         <label class="check"><input type="checkbox" name="autoRestart" class="switch" ${o.autoRestart ? 'checked' : ''}> Restart automatically if it crashes</label>
         <label class="check"><input type="checkbox" name="backupOnStop" class="switch" ${o.backupOnStop ? 'checked' : ''}> Back up the world every time it stops</label>
-        <label class="check"><input type="checkbox" name="eula" class="switch" ${o.eula ? 'checked' : ''}> I agree to the <a data-href="https://aka.ms/MinecraftEULA">Minecraft EULA</a></label>
+        <label>ON START COMMANDS <span class="muted small">(one per line)</span><textarea name="onStart" rows="2" placeholder="say Server is up!">${esc(o.onStart || '')}</textarea></label>
+        <label>ON STOP COMMANDS<textarea name="onStop" rows="2" placeholder="say Server restarting">${esc(o.onStop || '')}</textarea></label>
+        <label class="check"><input type="checkbox" name="eula" class="switch" ${o.eula ? 'checked' : ''}> I agree to the <a data-href="${bedrock ? 'https://minecraft.net/terms' : 'https://aka.ms/MinecraftEULA'}">Minecraft EULA</a>${bedrock ? ' and <a data-href="https://go.microsoft.com/fwlink/?LinkId=521839">Privacy Policy</a>' : ''}</label>
+        ${kind === 'profile' && cur.mc.loader !== 'vanilla' ? `<div class="row"><button type="button" id="srvLoader">${ic('up')} Update ${esc(cur.mc.loader)} loader${cur.mods.some(m => m.id === 'P7dR8mSH') ? ' + Fabric API' : ''}</button></div>` : ''}
       </form>
       <form class="opts" id="propsForm"><h4 class="muted">WORLD & RULES ${s.running ? '<span class="small">(applies after restart)</span>' : ''}</h4>
-        <label>MESSAGE OF THE DAY<input name="motd" value="${v('motd', cur.name)}"></label>
-        <div class="row"><label>GAME MODE${sel('gamemode', ['survival', 'creative', 'adventure', 'spectator'], 'survival')}</label>
+        ${bedrock ? `<label>SERVER NAME<input name="server-name" value="${v('server-name', cur.name)}"></label>` : `
+        <div class="row"><label>MESSAGE OF THE DAY <span class="muted small">(§ or & color codes)</span><input name="motd" id="motd" value="${v('motd', cur.name)}"></label>
+          <label class="grow0">SERVER ICON<button type="button" id="srvIconBtn">${s.icon ? `<img class="sicon" src="${s.icon}" alt="">` : ic('file')} Change</button></label></div>
+        <div class="motdprev" id="motdPrev">${motdHtml(pr.motd ?? cur.name)}</div>`}
+        <div class="row"><label>GAME MODE${sel('gamemode', ['survival', 'creative', 'adventure', ...(bedrock ? [] : ['spectator'])], 'survival')}</label>
           <label>DIFFICULTY${sel('difficulty', ['peaceful', 'easy', 'normal', 'hard'], 'easy')}</label></div>
         <div class="row"><label>MAX PLAYERS<input name="max-players" type="number" min="1" max="200" value="${v('max-players', 10)}"></label>
           <label>VIEW DISTANCE<input name="view-distance" type="number" min="3" max="32" value="${v('view-distance', 10)}"></label></div>
         <div class="row"><label>WORLD SEED<input name="level-seed" value="${v('level-seed', '')}" placeholder="Random"></label>
-          <label>SPAWN PROTECTION<input name="spawn-protection" type="number" min="0" value="${v('spawn-protection', 16)}"></label></div>
-        ${tog('pvp', 'PvP', 'true')}${tog('white-list', 'Whitelist only', 'false')}${tog('allow-flight', 'Allow flight (needed by some mods)', 'false')}
+          ${bedrock ? '' : `<label>SPAWN PROTECTION<input name="spawn-protection" type="number" min="0" value="${v('spawn-protection', 16)}"></label>`}</div>
+        ${bedrock ? tog('allow-cheats', 'Cheats', 'false') + tog('allow-list', 'Allowlist only', 'false') : `
+        ${tog('force-gamemode', 'Force game mode on join', 'false')}${tog('pvp', 'PvP', 'true')}${tog('white-list', 'Whitelist only', 'false')}${tog('allow-flight', 'Allow flight (needed by some mods)', 'false')}
         ${tog('hardcore', 'Hardcore', 'false')}${tog('allow-nether', 'Nether', 'true')}${tog('enable-command-block', 'Command blocks', 'false')}
-        <button class="primary">${ic('check')} Save world settings</button></form>`
+        <h4 class="muted">RESOURCE PACK</h4>
+        <label>PACK URL <span class="muted small">(https link players download, e.g. from Modrinth or Dropbox)</span><input name="resource-pack" id="rpUrl" value="${v('resource-pack', '')}"></label>
+        <div class="row"><label>SHA1<input name="resource-pack-sha1" id="rpSha" value="${v('resource-pack-sha1', '')}"></label><button type="button" id="rpHash" class="grow0">Calculate</button></div>
+        ${tog('require-resource-pack', 'Require the pack', 'false')}`}
+        <button class="primary">${ic('check')} Save world settings</button></form>
+      <input type="file" id="srvIconFile" accept="image/*" hidden>`
   }
   if (srvTab === 'backups') {
     const list = await api.backups(id)
@@ -822,19 +865,41 @@ async function showServer() {
       ${list.map(b => `<div class="acct"><b>${esc(b.name)}</b><span class="muted small">${(b.size / 1e6).toFixed(1)} MB · ${new Date(b.time).toLocaleString()}</span>
         <button data-restore="${esc(b.name)}" ${s.running ? 'disabled title="Stop the server first"' : ''}>Restore</button><button class="icon" data-delbk="${esc(b.name)}">${ic('trash')}</button></div>`).join('') || '<p class="muted small">No backups yet.</p>'}`
   }
+  if (srvTab === 'help') {
+    pane.innerHTML = '<p class="muted">Running checks…</p>'
+    const d = await api.diagnostics(id)
+    if (srvTab !== 'help') return
+    pane.innerHTML = `<div class="section"><h4>DIAGNOSTICS</h4>${d.map(x => `<div class="acct"><span class="dot ${x.ok ? 'on' : ''}"></span><b>${esc(x.name)}</b><span class="muted small">${esc(x.detail)}</span></div>`).join('')}</div>
+      <div class="section"><h4>TIPS</h4><p class="muted small">Friends can't join? Use "Get public address" and send them the bore.pub address. Mod servers need every player to have the same mods: send the invite link.
+      If the free tunnel is down, forward port ${esc(o.port)} (TCP${kind === 'bedrock' ? '/UDP' : ''}) on your router to this PC.</p></div>
+      <button id="srvShareLog">${ic('share')} Share server log</button> <button id="srvDiag">${ic('refresh')} Run again</button>`
+  }
+}
+async function pluginSearch() {
+  const id = cur.id, r = await run(() => api.pluginSearch(id, plugSrc, $('#plugQ')?.value || '', 1))
+  if (!r || srvTab !== 'plugins') return
+  const have = new Set((profiles.find(p => p.id === id)?.server?.plugins || []).map(x => x.id))
+  $('#plugList').innerHTML = r.items.map(m => `<div class="mod" data-pid="${esc(m.id)}">${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy">` : '<div class="noicon"></div>'}
+    <div class="body"><div class="top"><b>${esc(m.title)}</b><small>by ${esc(m.author)}</small><small>${ic('download', 'i sm')} ${fmt(m.downloads)}</small></div><p>${esc(m.desc)}</p></div>
+    <div class="actions"><button class="act ${have.has(m.id) ? 'done' : ''}" data-pinst="${esc(m.id)}">${have.has(m.id) ? installedBtn : `${ic('download')} Install`}</button></div></div>`).join('') || '<p class="muted">No plugins found.</p>'
 }
 function serverOpts() {
   const f = $('#srvForm'), saved = profiles.find(p => p.id === cur.id)?.server || {}
   if (!f) return saved
-  return { maxMem: f.maxMem.value, port: f.port.value, online: f.online.checked, geyser: f.geyser.checked, autoRestart: f.autoRestart.checked, backupOnStop: f.backupOnStop.checked, eula: f.eula.checked }
+  const val = n => f.elements[n]
+  return { kind: val('kind').value, maxMem: val('maxMem')?.value || saved.maxMem, port: val('port').value, online: val('online').checked, geyser: !!val('geyser')?.checked,
+    autoRestart: val('autoRestart').checked, backupOnStop: val('backupOnStop').checked, eula: val('eula').checked,
+    backupEvery: val('backupEvery').value, restartEvery: val('restartEvery').value, onStart: val('onStart').value, onStop: val('onStop').value }
 }
 async function serverStart(btn) {
-  const o = serverOpts()
+  const o = serverOpts(), st = await api.serverStatus(cur.id)
+  o.kind ||= st.kind
   if (!o.eula) { srvTab = 'settings'; await showServer(); return toast('Accept the Minecraft EULA in Settings first', true) }
+  if (o.kind !== 'bedrock' && +o.maxMem > st.ram * 0.75 && !confirm(`${(o.maxMem / 1024).toFixed(1)} GB is most of this PC's ${(st.ram / 1024).toFixed(0)} GB memory. Start anyway?`)) return
   btn.disabled = true; btn.innerHTML = `${ic('refresh', 'i spin')} Preparing…`
   srvTab = 'console'
   const ok = await run(() => api.serverStart(cur.id, o))
-  if (ok) cur.server = o, setProfile({ ...cur, server: o })
+  if (ok) setProfile({ ...cur, server: { ...cur.server, ...o } })
   showServer()
 }
 $('#list').addEventListener('click', async e => {
@@ -843,11 +908,49 @@ $('#list').addEventListener('click', async e => {
   const id = cur.id
   if (t.dataset.stab) return srvTab = t.dataset.stab, showServer()
   if (t.id === 'srvRestart') return run(() => api.serverRestart(id))
+  if (t.id === 'srvDiag') return showServer()
+  if (t.id === 'srvShareLog') {
+    if (!confirm('Upload the server log to mclo.gs (public link)? Logs can contain player names and IP addresses.')) return
+    const url = await run(() => api.shareLog(id, 'server')); if (url) navigator.clipboard.writeText(url), toast(`Log link copied: ${url}`), api.openExternal(url); return
+  }
+  if (t.id === 'srvLoader') {
+    if (!confirm('Update the mod loader to the newest version? Make a backup first if this world matters.')) return
+    const r = await run(() => api.updateLoader(id)); if (r) toast(`Loader ${r.from || 'auto'} → ${r.to}`), refresh(); return
+  }
+  if (t.id === 'srvIconBtn') return $('#srvIconFile').click()
+  if (t.id === 'rpHash') { t.disabled = true; const h = await run(() => api.sha1Url($('#rpUrl').value.trim())); t.disabled = false; if (h) $('#rpSha').value = h; return }
   if (t.dataset.pact) return run(async () => { await api.playerAction(id, t.dataset.pact, t.dataset.name); setTimeout(showServer, 800) })
   if (t.dataset.padd) { const n = $('#plname').value.trim(); if (n) run(async () => { await api.playerAction(id, t.dataset.padd, n); setTimeout(showServer, 800) }); return }
+  if (t.dataset.preset && confirm(`Reset ${t.dataset.preset}'s inventory, position, stats and advancements?`)) { if (await run(() => api.resetPlayer(id, t.dataset.preset))) toast('Player data reset'); return }
+  if (t.dataset.pbulk) {
+    const a = t.dataset.pbulk, names = [...selPlayers]
+    if (a === 'none') return selPlayers.clear(), showServer()
+    if (a === 'reset' && !confirm(`Reset data for ${names.length} players?`)) return
+    for (const n of names) await run(() => a === 'reset' ? api.resetPlayer(id, n) : api.playerAction(id, a, n))
+    selPlayers.clear(); toast('Done'); return setTimeout(showServer, 800)
+  }
+  if (t.dataset.pinst) { t.disabled = true; t.innerHTML = `${ic('refresh', 'i spin')} Installing…`; const l = await run(() => api.pluginInstall(id, plugSrc, t.dataset.pinst)); if (l) setProfile({ ...cur, server: { ...cur.server, plugins: l } }), toast('Plugin installed — restart the server'); return showServer() }
+  if (t.dataset.prm) { const l = await run(() => api.pluginRemove(id, t.dataset.prm)); if (l) setProfile({ ...cur, server: { ...cur.server, plugins: l } }); return showServer() }
   if (t.id === 'bkNow') { t.disabled = true; const n = await run(() => api.backup(id)); if (n) toast(`Backup saved: ${n}`); return showServer() }
   if (t.dataset.restore && confirm(`Restore ${t.dataset.restore}? The current world is replaced.`)) { if (await run(() => api.restoreBackup(id, t.dataset.restore))) toast('World restored'); return showServer() }
   if (t.dataset.delbk && confirm(`Delete ${t.dataset.delbk}?`)) { await run(() => api.deleteBackup(id, t.dataset.delbk)); return showServer() }
+})
+$('#list').addEventListener('change', async e => {
+  if (tab !== 'server') return
+  if (e.target.dataset.psel) { e.target.checked ? selPlayers.add(e.target.dataset.psel) : selPlayers.delete(e.target.dataset.psel); return showServer() }
+  if (e.target.id === 'srvKind') { const sv = await run(() => api.setServerKind(cur.id, e.target.value)); if (sv) setProfile({ ...cur, server: sv }); return showServer() }
+  if (e.target.id === 'plugSrc') { plugSrc = e.target.value; return pluginSearch() }
+  if (e.target.id === 'srvIconFile') {
+    const file = e.target.files[0]; if (!file) return
+    const img = await createImageBitmap(file), c = document.createElement('canvas'); c.width = c.height = 64
+    c.getContext('2d').drawImage(img, 0, 0, 64, 64)
+    if (await run(() => api.setServerIcon(cur.id, c.toDataURL('image/png')))) toast('Server icon saved'), showServer()
+  }
+})
+$('#list').addEventListener('input', e => {
+  if (e.target.id === 'motd') $('#motdPrev').innerHTML = motdHtml(e.target.value)
+  if (e.target.id === 'memRange') $('#memOut').textContent = (e.target.value / 1024).toFixed(1) + ' GB'
+  if (e.target.id === 'plugQ') { clearTimeout(timer); timer = setTimeout(pluginSearch, 350) }
 })
 $('#list').addEventListener('submit', async e => {
   if (e.target.id !== 'propsForm') return

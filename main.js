@@ -27,7 +27,8 @@ app.whenReady().then(() => {
   for (const [k, fn] of Object.entries(core)) ipcMain.handle(k, async (_, ...a) => {
     try { return await fn(...a) } catch (e) { if (e.open) shell.openExternal(e.open); throw e }
   })
-  ipcMain.handle('saveSettings', async (_, s) => { const r = await core.setSettings(s); nxmProtocol(!!r.nxmHandler); return r })
+  const loginItem = on => app.isPackaged && app.setLoginItemSettings({ openAtLogin: !!on })
+  ipcMain.handle('saveSettings', async (_, s) => { const r = await core.setSettings(s); nxmProtocol(!!r.nxmHandler); loginItem(r.autoStart); return r })
   ipcMain.handle('pickFolder', async () => (await dialog.showOpenDialog({ properties: ['openDirectory'] })).filePaths[0])
   const FILTERS = { mmpack: 'Mod Manager profile', mrpack: 'Modrinth modpack' }
   ipcMain.handle('saveFile', async (_, name, ext = 'mmpack') => (await dialog.showSaveDialog({ defaultPath: name, filters: [{ name: FILTERS[ext], extensions: [ext] }] })).filePath)
@@ -70,6 +71,6 @@ app.whenReady().then(() => {
   // Checks GitHub Releases, downloads in background, installs on quit. Only the installed (NSIS) build can self-update.
   autoUpdater.on('update-downloaded', i => win.webContents.send('updateReady', i.version))
   const check = () => autoUpdater.checkForUpdates().catch(() => {})
-  if (app.isPackaged) check(), setInterval(check, 3600e3)
+  if (app.isPackaged && core.getSettings().autoUpdate !== false) check(), setInterval(check, 3600e3)
 })
 app.on('window-all-closed', () => app.quit())

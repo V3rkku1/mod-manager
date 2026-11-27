@@ -56,6 +56,13 @@ Server tab (Minecraft profiles), a self-hosting panel similar to SquidServers:
 - Bedrock crossplay: Geyser + Floodgate (Fabric/NeoForge), Bedrock address shown (LAN; UDP).
 - Console with commands, Players (online list, op/kick/ban, whitelist), Settings (startup + server.properties editor: game mode, difficulty, PvP, seed, max players, whitelist…), Backups (back up now, back up on stop, restore, delete).
 - Auto-restart after crashes (max 3 in 10 minutes).
+- Server types: this profile (mods), Paper or Purpur (plugins from Modrinth and Hangar), or Bedrock Dedicated Server.
+- Scheduler: backups every N hours, restarts every N hours, commands on start and on stop.
+- Startup problem finder (port in use, missing dependency, client-only mod, wrong Java, out of memory) and one-click log sharing (mclo.gs).
+- Players: bulk op / whitelist / kick / ban, reset a player's inventory, stats and advancements.
+- Server icon, MOTD with color preview, resource pack URL with SHA1, force game mode.
+- Loader updater (and Fabric API), memory slider with warning, port conflict check, diagnostics (internet, Mojang, tunnel, port, memory).
+- App settings: start with Windows, turn automatic updates off.
 - Closing the window while a server runs keeps it running in the tray.
 
 ## Minecraft launcher

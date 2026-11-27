@@ -220,6 +220,13 @@ module.exports = base => {
       await download(v.downloads.server.url, path.join(dir, 'server.jar'), v.downloads.server.sha1)
       return { java, args: ['-jar', 'server.jar', 'nogui'] }
     }
+    if (loader === 'paper' || loader === 'purpur') {
+      const url = loader === 'paper' ? (await json(`https://fill.papermc.io/v3/projects/paper/versions/${mc}/builds/latest`)).downloads['server:default'].url
+        : `https://api.purpurmc.org/v2/purpur/${mc}/latest/download`
+      const jar = path.join(dir, `${loader}.jar`), stamp = jar + '.src'
+      if (!fs.existsSync(stamp) || fs.readFileSync(stamp, 'utf8') !== url + mc) fs.writeFileSync(jar, await bytes(url)), fs.writeFileSync(stamp, url + mc)
+      return { java, args: ['-jar', `${loader}.jar`, 'nogui'] }
+    }
     const lv = loaderVersion || await latestLoader(mc, loader)
     if (loader === 'fabric') {
       const iv = (await json('https://meta.fabricmc.net/v2/versions/installer')).find(i => i.stable)?.version

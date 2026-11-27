@@ -357,3 +357,15 @@ pre.snip { background: #111214; color: #d4d7dc; padding: 10px; border-radius: 6p
 #spane .acct .small { margin-left: auto; }
 .addp input { flex: 2; }
 #propsForm .check, #srvForm .check { display: flex; }
+.sicon { width: 32px; height: 32px; border-radius: 4px; image-rendering: pixelated; }
+button .sicon { width: 20px; height: 20px; }
+.grow0 { flex: none !important; }
+.grow2 { flex: 3 !important; }
+.motdprev { background: #111214; color: #aaa; padding: 8px 12px; border-radius: 6px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.c0{color:#000}.c1{color:#00a}.c2{color:#0a0}.c3{color:#0aa}.c4{color:#a00}.c5{color:#a0a}.c6{color:#fa0}.c7{color:#aaa}.c8{color:#555}.c9{color:#55f}.ca{color:#5f5}.cb{color:#5ff}.cc{color:#f55}.cd{color:#f5f}.ce{color:#ff5}.cf{color:#fff}.cl{font-weight:700}.co{font-style:italic}.cn{text-decoration:underline}.cm{text-decoration:line-through}
+#memOut { color: var(--text); }
+input[type=range] { padding: 0; accent-color: var(--accent); }
+#plugList { display: grid; gap: 8px; }
+.srvhead .tag { margin-right: auto; }
+#spane, .srv { grid-template-columns: minmax(0, 1fr); }
+#plugSrc { flex: none !important; width: 180px; }
