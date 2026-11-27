@@ -26,19 +26,22 @@ const minecraftDir = () => process.platform === 'win32' ? path.join(process.env.
   : process.platform === 'darwin' ? path.join(os.homedir(), 'Library/Application Support/minecraft')
   : path.join(os.homedir(), '.minecraft')
 
-// Prism Launcher install: { exe, args, data } or null. settings.prismPath (the executable) overrides detection.
-function findPrism(custom) {
-  const h = os.homedir(), env = process.env, ok = f => f && fs.existsSync(f)
-  const portable = exe => fs.existsSync(path.join(path.dirname(exe), 'portable.txt')) ? path.dirname(exe) : null
-  const native = process.platform === 'win32' ? path.join(env.APPDATA || h, 'PrismLauncher')
-    : process.platform === 'darwin' ? path.join(h, 'Library/Application Support/PrismLauncher') : path.join(h, '.local/share/PrismLauncher')
-  const exe = [custom, ...(process.platform === 'win32'
+// Prism Launcher / MultiMC install: { exe, args, data, cfg } or null. `custom` (the executable) overrides detection.
+// shortcut: MultiMC is treated as portable (data next to the exe) except the Linux package; forks work through a custom path.
+function findLauncher(kind, custom) {
+  const h = os.homedir(), env = process.env, win = process.platform === 'win32', mac = process.platform === 'darwin', ok = f => f && fs.existsSync(f)
+  if (kind === 'multimc') {
+    const exe = [custom, ...(win ? [] : mac ? ['/Applications/MultiMC.app/Contents/MacOS/MultiMC'] : ['/usr/bin/multimc', '/opt/multimc/run.sh'])].find(ok)
+    return exe && { exe, args: [], cfg: 'multimc.cfg', data: exe === '/usr/bin/multimc' ? path.join(h, '.local/share/multimc') : path.dirname(exe) }
+  }
+  const native = win ? path.join(env.APPDATA || h, 'PrismLauncher') : mac ? path.join(h, 'Library/Application Support/PrismLauncher') : path.join(h, '.local/share/PrismLauncher')
+  const exe = [custom, ...(win
     ? [env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Programs/PrismLauncher/prismlauncher.exe'), env.ProgramFiles && path.join(env.ProgramFiles, 'PrismLauncher/prismlauncher.exe'), path.join(h, 'scoop/apps/prismlauncher/current/prismlauncher.exe')]
-    : process.platform === 'darwin' ? ['/Applications/Prism Launcher.app/Contents/MacOS/prismlauncher', path.join(h, 'Applications/Prism Launcher.app/Contents/MacOS/prismlauncher')]
+    : mac ? ['/Applications/Prism Launcher.app/Contents/MacOS/prismlauncher', path.join(h, 'Applications/Prism Launcher.app/Contents/MacOS/prismlauncher')]
     : ['/usr/bin/prismlauncher', '/usr/local/bin/prismlauncher', path.join(h, '.local/bin/prismlauncher')])].find(ok)
-  if (exe) return { exe, args: [], data: portable(exe) || native }
+  if (exe) return { exe, args: [], cfg: 'prismlauncher.cfg', data: fs.existsSync(path.join(path.dirname(exe), 'portable.txt')) ? path.dirname(exe) : native }
   const flat = path.join(h, '.var/app/org.prismlauncher.PrismLauncher/data/PrismLauncher')
-  if (process.platform === 'linux' && fs.existsSync(flat)) return { exe: 'flatpak', args: ['run', 'org.prismlauncher.PrismLauncher'], data: flat }
+  if (process.platform === 'linux' && fs.existsSync(flat)) return { exe: 'flatpak', args: ['run', 'org.prismlauncher.PrismLauncher'], cfg: 'prismlauncher.cfg', data: flat }
   return null
 }
 
@@ -684,7 +687,8 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       const LOOK = { theme: v => ['midnight', 'amoled', 'dark', 'light'].includes(v), accent: v => /^#[0-9a-f]{6}$/i.test(v), density: v => ['comfy', 'compact'].includes(v),
         scale: v => v >= 80 && v <= 130, motion: v => typeof v === 'boolean', descs: v => typeof v === 'boolean', rememberLast: v => typeof v === 'boolean' }
       for (const [k, ok] of Object.entries(LOOK)) if (k in patch && !ok(patch[k])) delete patch[k]
-      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'prismPath', 'autoStart', 'autoUpdate', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
+      if ('launcher' in patch && !['official', 'prism', 'multimc'].includes(patch.launcher)) delete patch.launcher
+      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'prismPath', 'launcher', 'autoStart', 'autoUpdate', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
       return setSettingsRaw({ ...Object.fromEntries(pick.map(k => [k, patch[k]])), ...(patch.launch ? { launch: cleanLaunch(patch.launch) } : {}) })
     },
 
@@ -1186,7 +1190,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     // Setup checklist: what still needs doing for every feature to work.
     setupStatus: async () => {
       const s = settings()
-      return { prism: !!findPrism(s.prismPath), msLogin: readAccounts().length > 0, msClientId: !!s.msClientId, playit: !!playitSecret(),
+      return { launcher: s.launcher || 'official', launcherFound: !!findLauncher(s.launcher, s.prismPath), msLogin: readAccounts().length > 0, msClientId: !!s.msClientId, playit: !!playitSecret(),
         curseforge: !!s.curseforgeKey, nexus: !!s.nexusKey, github: !!s.githubToken, minecraftLauncher: fs.existsSync(path.join(minecraftDir(), 'launcher_profiles.json')) }
     },
 
@@ -1248,12 +1252,11 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       return true
     },
 
-    // Play through Prism Launcher with no Prism window: Prism does the Microsoft login, Java and game files.
-    // The Prism instance's game folder is a link to this profile's folder, so mods, worlds and configs stay shared.
-    // Returns null when Prism isn't installed (the caller falls back to the official launcher).
+    // Play through Prism Launcher or MultiMC (settings.launcher) with no launcher window: it does the Microsoft login, Java and game files.
+    // The instance's game folder is a link to this profile's folder, so mods, worlds and configs stay shared.
     playPrism: async pid => {
-      const pr = findPrism(settings().prismPath)
-      if (!pr) return null
+      const s = settings(), pr = findLauncher(s.launcher, s.prismPath)
+      if (!pr) throw new Error(`${s.launcher === 'multimc' ? 'MultiMC' : 'Prism Launcher'} not found. Set its path in Settings → Accounts.`)
       if (running[pid]) throw new Error('Already running')
       let p = load(pid)
       if (p.type !== 'modrinth') throw new Error('Only Minecraft profiles')
@@ -1262,13 +1265,13 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
         emit('status', { pid, text: 'Preparing…' })
         p = await serialDeploy(pid)
         const lv = p.mc.loader === 'vanilla' ? null : p.mc.loaderVersion || await mcl.latestLoader(p.mc.version, p.mc.loader)
-        const cfgFile = path.join(pr.data, 'prismlauncher.cfg')
+        const cfgFile = path.join(pr.data, pr.cfg)
         const instRoot = path.resolve(pr.data, (fs.existsSync(cfgFile) && fs.readFileSync(cfgFile, 'utf8').match(/^InstanceDir=(.+)$/m)?.[1].trim()) || 'instances')
         const id = `mm-${pid}`.replace(/[^\w-]/g, ''), inst = path.join(instRoot, id), game = path.join(inst, 'minecraft')
         fs.mkdirSync(inst, { recursive: true }); fs.mkdirSync(p.target, { recursive: true })
         if (!fs.existsSync(game)) fs.symlinkSync(p.target, game, 'junction')
         const uid = { fabric: 'net.fabricmc.fabric-loader', quilt: 'org.quiltmc.quilt-loader', forge: 'net.minecraftforge', neoforge: 'net.neoforged' }[p.mc.loader]
-        // Prism adds the components these need (intermediary mappings, LWJGL) by itself.
+        // The launcher adds the components these need (intermediary mappings, LWJGL) by itself.
         writeAtomic(path.join(inst, 'mmc-pack.json'), JSON.stringify({ formatVersion: 1, components: [{ uid: 'net.minecraft', version: p.mc.version, important: true },
           ...(uid && lv ? [{ uid, version: lv }] : [])] }, null, 1))
         const mem = p.launch?.maxMem || settings().launch?.maxMem || 4096
