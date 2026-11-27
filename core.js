@@ -119,7 +119,7 @@ const presetOf = p => PRESETS.find(x => (p.type === 'nexus' && x.domain === p.ga
 
 module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } = {}) => {
   fs.mkdirSync(root, { recursive: true })
-  const mcl = MC(path.join(root, '..', 'minecraft'))
+  const mcl = MC(path.join(root, '..', 'minecraft')), LX = require('./launcherx')(path.join(root, '..'))
   const settingsFile = path.join(root, '..', 'settings.json')
   const settings = () => { try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')) } catch { return {} } }
   const dir = id => inside(root, id)
@@ -716,7 +716,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
     'preview', 'checkFollow', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
-    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'watchGame', 'playCustom', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'watchGame', 'playCustom', 'lxConfig', 'lxStatus', 'lxRun', 'lxDir', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -1604,5 +1604,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       if (!p) throw new Error(`Make a Nexus profile for "${u.hostname}" first`)
       return install(p.id, 'nexus', m[1], m[2], { key: u.searchParams.get('key'), expires: u.searchParams.get('expires') })
     },
+    // Launcher-X built in (launcherx.js): its own config file, so it is not tied to profiles.
+    ...(({ lxConfig, lxSave, lxPut, lxRemove, lxStatus, lxRun, lxDir }) => ({ lxConfig, lxSave, lxPut, lxRemove, lxStatus, lxRun, lxDir }))(LX),
   }).map(([k, fn]) => [k, parallel.includes(k) ? fn : serial(fn)]))
 }

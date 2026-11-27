@@ -503,3 +503,7 @@ button[data-href] { color: #fff; text-decoration: none !important; }
 .addsrv { margin-top: 10px; } .addsrv button { flex: none; }
 .ifilter { display: flex; gap: 8px; margin-bottom: 10px; } .ifilter .search { flex: 1; } .ifilter .search input { width: 100%; } .ifilter select { width: auto; }
 .mod[hidden] { display: none; }
+#lxDlg { width: min(760px, calc(100vw - 32px)); } #lxBody { display: grid; gap: 12px; }
+.lxlist { display: grid; gap: 8px; } .lxp { display: grid; gap: 8px; padding: 12px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); }
+.lxp > div:first-child { display: grid; min-width: 0; } .lxp small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lxp .row { flex-wrap: wrap; } .lxp .row > * { flex: none; } .lxform { display: grid; gap: 10px; } .lxform h3 { margin: 0; color: var(--head); font-size: 15px; }

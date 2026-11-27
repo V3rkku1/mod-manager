@@ -51,6 +51,7 @@ function render() {
     + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''} ${running.has(p.id) ? 'playing' : ''}" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}${Object.keys(updates[p.id] || {}).length ? `<i class="rbadge">${Object.keys(updates[p.id]).length}</i>` : ''}</button>`).join('')).join('')
     + (profiles.length ? '<div class="sep"></div>' : '')
     + `<button class="pfp add" id="add" data-tip="New profile">${ic('plus')}</button>`
+    + `<button class="pfp lx" id="lxOpen" data-tip="Launcher-X (build + run projects)">${ic('terminal')}</button>`
     + `<button class="pfp gear" id="settings" data-tip="${setupLeft ? 'Finish setup' : 'Settings'}">${ic('gear')}${setupLeft ? `<i class="rbadge">${setupLeft}</i>` : ''}</button>`
   $('#app').classList.toggle('empty', !cur)
   if (!cur) return
@@ -233,6 +234,7 @@ $('#rail').onmouseleave = () => $('#tip').hidden = true
 $('#rail').onclick = e => {
   const b = e.target.closest('button'); if (!b) return
   if (b.id === 'add') return openNew()
+  if (b.id === 'lxOpen') return openLx()
   if (b.id === 'settings') return openSettings(setupLeft ? 'setup' : 'appearance')
   cur = profiles.find(p => p.id === b.dataset.id); tab = 'browse'; $('#q').value = ''; chips.clear(); $('#section').value = ''; render()
 }
@@ -1442,3 +1444,51 @@ $('#collBody').onclick = async e => {
   if (fail.length) toast(`${ok} installed, ${req.length - ok} not. Free Nexus accounts must download each file on the website (Mod Manager Download button).`, true)
   else toast(`Installed ${ok} mods from ${c.name}`)
 }
+
+// ---- Launcher-X built in: clone / update / build / run GitHub projects in a PowerShell console ----
+let lxEdit = null // project name being edited, '' for a new one
+async function openLx() { await drawLx(); if (!$('#lxDlg').open) $('#lxDlg').showModal() }
+async function drawLx() {
+  const c = await api.lxConfig(), e = lxEdit === null ? null : c.projects.find(p => p.name === lxEdit) || { name: '', repo: '', branch: 'main', build: [], run: '' }
+  $('#lxBody').innerHTML = `${window.platform === 'win32' ? '' : '<div class="banner warn">' + ic('alert') + '<div><p>Projects build and run on Windows. You can still edit the list here.</p></div></div>'}
+    <div class="row"><label>PROJECTS FOLDER<div class="codebox"><input id="lxRoot" value="${esc(c.root)}"><button type="button" data-lx="pickRoot">${ic('folder')}</button></div></label></div>
+    <div class="row"><label><span>GAME EXE <span class="muted">(used as {game} in run commands)</span></span><div class="codebox"><input id="lxGame" value="${esc(c.game)}" placeholder="Pick the game .exe"><button type="button" data-lx="pickGame">${ic('file')}</button></div></label></div>
+    <label class="check"><input type="checkbox" id="lxAuto" class="switch" ${c.autoUpdate ? 'checked' : ''}> Pull updates before Launch</label>
+    <div class="lxlist">${c.projects.map(p => `<div class="lxp" data-name="${esc(p.name)}"><div><b>${esc(p.name)}</b><small class="muted">${esc(p.repo)} · ${esc(p.branch)}</small><small class="lxst muted">Checking…</small></div>
+      <div class="row"><button type="button" class="primary" data-lx="launch">${ic('play')} Launch</button><button type="button" data-lx="update">${ic('refresh')} Update + Build</button>
+      <button type="button" data-lx="rebuild">${ic('wrench')} Rebuild</button><button type="button" class="icon" data-lx="folder" title="Open folder">${ic('folder')}</button>
+      <button type="button" class="icon" data-lx="edit" title="Edit">${ic('pencil')}</button><button type="button" class="icon danger" data-lx="remove" title="Remove">${ic('trash')}</button></div></div>`).join('')
+      || '<p class="muted">No projects. Add one below.</p>'}</div>
+    ${e ? `<form id="lxForm" class="lxform"><h3>${e.name ? 'Edit ' + esc(e.name) : 'Add project'}</h3>
+      <div class="row"><label>NAME<input name="name" value="${esc(e.name)}" required></label><label>BRANCH<input name="branch" value="${esc(e.branch)}"></label></div>
+      <label>GITHUB REPOSITORY<input name="repo" value="${esc(e.repo)}" placeholder="https://github.com/owner/repo" required></label>
+      <label><span>BUILD COMMANDS <span class="muted">(one per line, PowerShell)</span></span><textarea name="build" rows="3" placeholder="cargo build --release --locked">${esc(e.build.join('\n'))}</textarea></label>
+      <label><span>RUN COMMAND <span class="muted">({game} = game exe)</span></span><input name="run" value="${esc(e.run)}" placeholder=".\\target\\release\\app.exe"></label>
+      <div class="row"><button type="button" data-lx="cancel">Cancel</button><button class="primary">${ic('check')} Save project</button></div></form>`
+    : `<button type="button" data-lx="add">${ic('plus')} Add project</button>`}`
+  for (const el of document.querySelectorAll('#lxBody .lxp')) api.lxStatus(el.dataset.name).then(t => { el.querySelector('.lxst').textContent = t }, () => {})
+}
+$('#lxDlg').addEventListener('change', e => {
+  const patch = e.target.id === 'lxRoot' ? { root: e.target.value.trim() } : e.target.id === 'lxGame' ? { game: e.target.value.trim() } : e.target.id === 'lxAuto' ? { autoUpdate: e.target.checked } : null
+  if (patch) run(() => api.lxSave(patch)).then(() => patch.root && drawLx())
+})
+$('#lxDlg').addEventListener('click', async e => {
+  const b = e.target.closest('[data-lx]'); if (!b) return
+  const a = b.dataset.lx, name = b.closest('.lxp')?.dataset.name
+  if (a === 'pickRoot') { const d = await api.pickFolder(); if (d) await run(() => api.lxSave({ root: d })), drawLx() }
+  if (a === 'pickGame') { const f = await api.openFile(['exe']); if (f) await run(() => api.lxSave({ game: f })), drawLx() }
+  if (a === 'launch' || a === 'update' || a === 'rebuild') {
+    if (await run(() => api.lxRun(name, a === 'launch' ? 'launch' : a === 'update' ? ['update', 'build'] : ['build', 'force']))) toast(`${name}: running in a PowerShell window`)
+  }
+  if (a === 'folder') api.openFolder(await api.lxDir(name))
+  if (a === 'edit' || a === 'add') { lxEdit = a === 'add' ? '' : name; drawLx() }
+  if (a === 'cancel') { lxEdit = null; drawLx() }
+  if (a === 'remove' && confirm(`Remove ${name} from the list?`)) {
+    const del = confirm(`Also permanently delete its downloaded files?\n${await api.lxDir(name)}`)
+    if (await run(() => api.lxRemove(name, del))) drawLx()
+  }
+})
+$('#lxDlg').addEventListener('submit', async e => {
+  e.preventDefault()
+  if (await run(() => api.lxPut(Object.fromEntries(new FormData(e.target)), lxEdit || undefined))) { lxEdit = null; drawLx(); toast('Project saved') }
+})
