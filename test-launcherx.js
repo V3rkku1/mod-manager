@@ -13,6 +13,8 @@ const b = LX.script(c, p, ['build', 'force'])
 assert(!b.includes('git pull') && b.includes('if ($true)') && !b.includes('p.ps1'), 'force/no-run')
 assert.equal(LX.lxConfig().projects.length, 4, 'defaults')
 assert.equal(LX.lxConfig().enabled, false, 'hidden until added with + > Recomps')
+assert.deepEqual(LX.needs(LX.lxConfig()), ['git', 'cargo', 'msvc', 'python'], 'tools the default projects need')
+assert(a.includes("GetEnvironmentVariable('Path', 'Machine')"), 'fresh PATH so newly installed Rust is found')
 assert.equal(LX.lxSave({ enabled: true, name: 'GTA 6' }).enabled, true)
 const sh = LX.script(c, { ...p, shaders: ["warm.exe '{game}'"] }, ['build', 'shaders'])
 assert(sh.includes("warm.exe '/it''s/game.exe'; X") && !sh.includes('p.ps1'), 'shader prep step')
@@ -39,8 +41,9 @@ LX.lxRemove('demo2'); assert.equal(LX.lxConfig().projects.length, 4)
   LX.lxSave({ root: path.join(tmp, "it's projects"), game: path.join(tmp, "game's.exe") })
   LX.lxPut({ name: 'demo', repo: src, build: `Add-Content ${LX.Q(count)} x`, run: "Set-Content ran.txt '{game}'" })
   c = LX.lxConfig(); p = c.projects.find(x => x.name === 'demo')
-  const job = (...steps) => { const f = path.join(tmp, 'job.ps1'); fs.writeFileSync(f, '﻿' + LX.script(c, p, steps)); return sh(shell, tmp, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', f) }
+  const job = (...steps) => { const f = path.join(tmp, 'job.ps1'); fs.writeFileSync(f, '\ufeff' + LX.script(c, p, steps)); return sh(shell, tmp, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', f) }
 
+  if (process.platform === 'win32') { const miss = await LX.lxTools(); assert(Array.isArray(miss) && !miss.some(t => t.id === 'git'), 'tool check: ' + JSON.stringify(miss)) }
   assert.equal(await LX.lxStatus('demo'), 'Not installed')
   assert.equal(job('update', 'build', 'run'), 0); assert.equal(builds(), 1)
   assert.equal(fs.readFileSync(path.join(LX.lxDir('demo'), 'ran.txt'), 'utf8').trim(), c.game, 'run got game path')

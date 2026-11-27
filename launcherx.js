@@ -20,6 +20,26 @@ const defaults = root => ({
   ],
 })
 
+// Windows keeps PATH in the registry; a console started from an app gets the app's old copy.
+const PATH_REFRESH = "$m = [Environment]::GetEnvironmentVariable('Path', 'Machine'); if ($m) { $env:Path = $m + ';' + [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path }"
+// What the projects need on Windows, and the winget package that installs it (Launcher-X's CheckTools + its README's build tools line).
+const TOOLS = {
+  git: { label: 'Git', install: 'winget install -e --id Git.Git' },
+  cargo: { label: 'Rust', install: 'winget install -e --id Rustlang.Rustup' },
+  msvc: { label: 'C++ build tools (needed by Rust)', install: 'winget install -e --id Microsoft.VisualStudio.2022.BuildTools --override "--wait --quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"' },
+  python: { label: 'Python', install: 'winget install -e --id Python.Python.3.12' },
+}
+const needs = c => {
+  const cmds = c.projects.flatMap(p => [...(p.build || []), ...(p.shaders || [])]).join('\n')
+  return ['git', ...(/\bcargo\b/.test(cmds) ? ['cargo', 'msvc'] : []), ...(/\bpython\b/.test(cmds) ? ['python'] : [])]
+}
+// Opens a PowerShell window running `text` (written to a temp .ps1).
+function console_(name, text) {
+  const f = path.join(os.tmpdir(), `${name}.ps1`)
+  fs.writeFileSync(f, '\ufeff' + text) // BOM: PowerShell 5.1 reads BOM-less files as ANSI
+  spawn('cmd.exe', ['/c', 'start', '""', 'powershell', '-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', f], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+  return true
+}
 const Q = s => "'" + String(s ?? '').replace(/'/g, "''") + "'"
 const NAME = /^[\w.-]{1,80}$/
 
@@ -29,6 +49,7 @@ function script(c, p, steps) {
   const o = [
     'function X { if ($LASTEXITCODE) { throw "Step failed, exit code $LASTEXITCODE" } }',
     "$ErrorActionPreference = 'Stop'",
+    PATH_REFRESH, // tools installed after Mod Manager started (Rust, Git) are found without restarting it
     `New-Item -ItemType Directory -Force ${Q(c.root)} | Out-Null`,
     `if (!(Test-Path ${Q(path.join(dir, '.git'))})) { git clone --recurse-submodules -b ${Q(p.branch || 'main')} ${Q(p.repo)} ${Q(dir)}; X }`,
     `Set-Location ${Q(dir)}`,
@@ -67,7 +88,7 @@ module.exports = dataDir => {
     return { name, repo, branch: String(p.branch || 'main').trim() || 'main', build: lines(p.build), shaders: lines(p.shaders), run: String(p.run || '').trim() }
   }
   return {
-    script, Q,
+    script, Q, needs,
     lxConfig: load,
     lxSave: patch => {
       const c = load()
@@ -113,10 +134,28 @@ module.exports = dataDir => {
         steps = c.autoUpdate ? ['update', 'build', 'run'] : ['build', 'run']
       }
       if (!Array.isArray(steps) || !steps.every(s => ['update', 'build', 'force', 'shaders', 'run'].includes(s))) throw new Error('Bad steps')
-      const f = path.join(os.tmpdir(), `launcherx-${p.name}.ps1`)
-      fs.writeFileSync(f, '﻿' + script(c, p, steps)) // BOM: PowerShell 5.1 reads BOM-less files as ANSI
-      spawn('cmd.exe', ['/c', 'start', '""', 'powershell', '-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', f], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
-      return true
+      return console_(`launcherx-${p.name}`, script(c, p, steps))
+    },
+    // Missing tools for the listed projects: [{ id, label }]. Windows only (the projects build there).
+    lxTools: () => new Promise(ok => {
+      if (process.platform !== 'win32') return ok([])
+      const want = needs(load())
+      const ps = [PATH_REFRESH,
+        "foreach ($t in 'git', 'cargo', 'python') { if (Get-Command $t -CommandType Application -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch 'WindowsApps' }) { $t } }",
+        '$vw = "${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe"',
+        "if ((Test-Path $vw) -and (& $vw -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)) { 'msvc' }"].join('\n')
+      execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 60e3 }, (e, out) => {
+        const have = new Set(String(out || '').split(/\s+/))
+        ok(e ? [] : want.filter(t => !have.has(t)).map(id => ({ id, label: TOOLS[id].label })))
+      })
+    }),
+    // Installs them with winget in a PowerShell window (the build tools ask for admin rights).
+    lxInstallTools: ids => {
+      if (process.platform !== 'win32') throw new Error('Installing tools works on Windows')
+      const list = ids.filter(id => TOOLS[id])
+      if (!list.length) return false
+      return console_('launcherx-tools', [...list.map(id => `Write-Host 'Installing ${TOOLS[id].label}...'; ${TOOLS[id].install} --accept-source-agreements --accept-package-agreements`),
+        "Write-Host ''; Write-Host 'Done. Close this window and press Check again in Mod Manager.'"].join('\n'))
     },
     lxDir: name => { const c = load(); return path.join(c.root, find(c, name).name) },
   }

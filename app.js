@@ -1503,7 +1503,7 @@ async function drawLx() {
     <p class="muted small">Projects are recomps: they are downloaded with git, built and run with your game. Each job opens its own PowerShell window.</p>
     <div class="row"><button type="button" class="danger" data-lx="hide">${ic('trash')} Remove from the sidebar</button></div>
     <p class="muted small">Removing keeps your projects and downloaded files; add it again with + → Recomps.</p></form>`
-    : `${warn}${c.game ? '' : `<div class="banner warn">${ic('alert')}<div><p>Pick the game exe in <button class="linkish" data-lx="toSettings">Settings</button> before Launch or Prepare shaders.</p></div></div>`}
+    : `${warn}<div id="lxTools"></div>${c.game ? '' : `<div class="banner warn">${ic('alert')}<div><p>Pick the game exe in <button class="linkish" data-lx="toSettings">Settings</button> before Launch or Prepare shaders.</p></div></div>`}
     ${c.projects.map(p => `<div class="mod lxp" data-name="${esc(p.name)}"><div class="noicon lxicon">${initials(p.name)}</div>
       <div class="body"><div class="top"><b>${esc(p.name)}</b><span class="tag">${esc(p.branch)}</span><span class="tag lxst">Checking…</span>${p.shaders?.length ? '<span class="tag">Shader prep</span>' : ''}</div><p>${esc(p.repo)}</p></div>
       <div class="actions"><button class="play" data-lx="launch">${ic('play')} Launch</button>
@@ -1519,6 +1519,11 @@ async function drawLx() {
       <label><span>RUN COMMAND <span class="muted">({game} = game exe)</span></span><input name="run" value="${esc(e.run)}" placeholder=".\\target\\release\\app.exe"></label>
       <div class="row"><button type="button" data-lx="cancel">Cancel</button><button class="primary">${ic('check')} Save project</button></div></form>`
     : `<button type="button" data-lx="add">${ic('plus')} Add project</button>`}`
+  if (tab === 'lxprojects') api.lxTools().then(miss => {
+    if (miss.length && $('#lxTools')) $('#lxTools').innerHTML = `<div class="banner warn">${ic('wrench')}<div><b>Needed to build: ${esc(miss.map(t => t.label).join(', '))}</b>
+      <p>Installs with winget (Windows' own installer) in a PowerShell window. The C++ build tools are several GB and ask for admin rights.</p></div>
+      <button data-lx="recheck">Check again</button><button class="primary" data-lx="tools" data-ids="${esc(miss.map(t => t.id).join(','))}">${ic('download')} Install</button></div>`
+  }, () => {})
   for (const el of document.querySelectorAll('#lxList .lxp')) api.lxStatus(el.dataset.name).then(t => {
     const tg = el.querySelector('.lxst'); tg.textContent = t; tg.classList.toggle('upd', /Update|not built/.test(t))
   }, () => {})
@@ -1532,6 +1537,8 @@ $('#lxList').addEventListener('click', async e => {
   const b = e.target.closest('[data-lx]'); if (!b) return
   const a = b.dataset.lx, name = b.closest('.lxp')?.dataset.name
   if (a === 'toSettings') { tab = 'lxsettings'; return render() }
+  if (a === 'tools' && await run(() => api.lxInstallTools(b.dataset.ids.split(',')))) toast('Installing in a PowerShell window — press Check again when it says Done')
+  if (a === 'recheck') { b.disabled = true; drawLx() }
   if (a === 'hide' && confirm(`Remove ${lxName} from the sidebar?`)) { await run(() => api.lxSave({ enabled: false })); lxOn = lxView = false; tab = 'browse'; return render() }
   if (a === 'pickRoot') { const d = await api.pickFolder(); if (d) await run(() => api.lxSave({ root: d })), drawLx() }
   if (a === 'pickGame') { const f = await api.openFile(['exe']); if (f) await run(() => api.lxSave({ game: f })), drawLx() }
