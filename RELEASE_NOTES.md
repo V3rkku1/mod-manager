@@ -1,19 +1,10 @@
-## What's new in 0.18.0
+## What's new in 0.18.1
 
 ### Recomps (GTA 6)
-- Recomps are optional now: add them with **+ → Recomps** (named GTA 6 by default). Remove from the sidebar in its Settings.
-- Builds show their log on the page, with Stop and the failing line when a build breaks. Only the game opens in a PowerShell window.
-- Play bar: pick a project and press Play; it remembers the last one.
-- Play options per project: DLSS, resolution, frame generation and Series S for VIctory-NVIDIA; ray tracing, upscaling and console profile for VIctory-DexNom; extra arguments for any project.
-- Disk use per project and Clean build files.
-- New commits on GitHub are shown per project, with a notification every 3 hours.
-- Missing Rust, Git, C++ build tools or Python? Install them from the page with winget.
-- Each project links to its GitHub page and latest release.
-
-### Minecraft
-- Crash help after any launcher (official, Prism, your own command), with Disable all & retry.
-- Update all shows every changelog first.
-- World backups: back up, restore, and optionally back up before every Play.
-
-### App
-- App updates setting: automatic, ask before downloading, or only when you check.
+- Fixed: Launch could keep building forever and never start the game (a "press any key" at the end of VIctory-NVIDIA's DLSS download step).
+- Fixed: Git, Rust, Python or the C++ build tools shown as missing although installed. "I have them" hides the notice.
+- Play now asks for what it needs right away: installs missing build tools, then lets you pick the game exe.
+- The card and Play button show the current step (Downloading, Building · N parts, Getting files, Preparing shaders).
+- Clearer statuses (Not downloaded yet, Needs a build, Ready) and a hint for the first, longer build.
+- Tidier cards: Launch and play options up front, everything else in the ⋯ menu.
+- Notification when a long build finishes or fails while you're in another window.
