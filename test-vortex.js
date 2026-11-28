@@ -21,6 +21,13 @@ const read = f => fs.readFileSync(path.join(tmp, 'game', f), 'utf8')
   const esp = path.join(tmp, 'game', 'A.esp'), t0 = fs.statSync(esp).mtimeMs
   fs.writeFileSync(path.join(tmp, 'game', 'textures/sky.dds'), 'X'); await core.deploy(p.id)
   assert.strictEqual(fs.statSync(esp).mtimeMs, t0, 'unchanged file skipped'); assert.strictEqual(read('textures/sky.dds'), 'A', 'edited file restored')
+  // Drag to top (afterId null), then back
+  assert.strictEqual((await core.moveMod(p.id, 'local:A.zip', null)).mods[0].id, 'local:A.zip', 'moved to top')
+  await core.moveMod(p.id, 'local:A.zip', 'local:B.zip')
+  // Disk cleanup removes only staging folders no mod uses
+  fs.mkdirSync(path.join(tmp, 'profiles', p.id, 'files', 'nexus-999', 'x'), { recursive: true }); fs.writeFileSync(path.join(tmp, 'profiles', p.id, 'files', 'nexus-999', 'x', 'y'), 'z')
+  assert.deepStrictEqual((await core.diskUsage(p.id)).orphans, ['nexus-999'], 'orphan found')
+  assert.strictEqual(await core.cleanup(p.id), 1); assert.strictEqual(read('textures/sky.dds'), 'A'); assert.deepStrictEqual((await core.diskUsage(p.id)).orphans, [])
   // Load order: masters first, custom order kept
   const lo = await core.loadOrder(p.id)
   assert.deepStrictEqual(lo.plugins.map(x => x.name), ['B.esm', 'A.esp'])

@@ -102,6 +102,7 @@
         <button id="allOff" title="Turn every mod off or on (then Deploy / Play)"><svg class="i"><use href="#i-x"/></svg> Disable all</button>
         <button id="addFiles" title="Add mod files from your computer (or drag and drop)"><svg class="i"><use href="#i-plus"/></svg> Add files</button>
         <input type="file" id="fileInput" multiple hidden>
+        <button id="pasteList" title="Paste mod names or links, one per line, and install them all"><svg class="i"><use href="#i-file"/></svg> Paste list</button>
         <button id="checkUpd"><svg class="i"><use href="#i-refresh"/></svg> Check updates</button>
         <button id="updAll" class="primary" hidden><svg class="i"><use href="#i-up"/></svg> Update all</button>
       </header>
@@ -279,6 +280,11 @@
 <dialog id="chgDlg"><button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button><h2 id="chgTitle">What's new</h2><div id="chgBody" class="desc"></div></dialog>
 
 <dialog id="quickDlg"><input id="quickQ" placeholder="Jump to a profile…" autocomplete="off"><div id="quickList"></div></dialog>
+
+<dialog id="pasteDlg"><form id="pasteForm"><h2>Install a list of mods</h2>
+  <p class="muted small">One per line: a mod name, a Modrinth or Thunderstore link, or a mod ID. Names install the top search result.</p>
+  <textarea id="pasteText" rows="10" placeholder="sodium&#10;https://modrinth.com/mod/lithium&#10;Mod Menu"></textarea>
+  <menu><button type="button" data-close>Cancel</button><button class="primary">Install all</button></menu></form></dialog>
 
 <dialog id="askDlg"><form id="askForm"><h2 id="askTitle"></h2><input id="askInput" maxlength="40">
   <menu><button type="button" data-close>Cancel</button><button class="primary">OK</button></menu></form></dialog>

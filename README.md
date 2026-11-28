@@ -35,6 +35,8 @@ Build locally: `npm run dist` (installer needs Windows or Wine; `npx electron-bu
 3. **Installed** → select several for bulk update/enable/disable/remove, pin versions, add notes, see which mod needs which dependency (unused ones are offered for removal), conflict warnings.
    toggle mods on/off (or **Disable all** to play the unmodded game), update one or all, remove.
    Browse has category chips, sections (Thunderstore) and page numbers.
+   Select all / Shift-click a range, sort the view (name, newest, updates first, disabled last), drag mods to change which one wins file conflicts.
+   **Paste list**: mod names, Modrinth/Thunderstore links or IDs, one per line, installed in one go.
 4. Target folder: the target icon finds the game in your Steam libraries; the pencil picks it by hand.
 5. **Deploy** copies enabled mods there. **Play** deploys and starts the game (Steam or Minecraft Launcher).
 6. **Share**:
@@ -57,6 +59,8 @@ Settings (gear, or Ctrl+,) has sections: Appearance, Accounts, Minecraft, Mod si
 - Themes: Midnight (default, extra dark), AMOLED black, Classic dark, Light; live preview.
 - Accent color (8 presets or any color), Comfortable / Compact layout, interface size 80–130%, animations on/off, hide mod descriptions.
 - Reopen the last profile and tab on start; the window remembers its size and position.
+- Drag profiles on the left bar to reorder them; dropping next to a grouped profile moves it into that group.
+- Options → Disk space: profile size, and Clean up removes leftovers of failed or cancelled installs.
 - Shortcuts: Ctrl+K switch profile, Ctrl+F search, Ctrl+1–5 tabs, Ctrl+, settings.
 
 ## Skyrim, Fallout & other Nexus games (Vortex-style)

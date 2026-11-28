@@ -131,6 +131,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const stageKey = (src, id) => `${src}-${id}`.replace(/[^\w.-]/g, '_').slice(0, 120)
   const load = id => JSON.parse(fs.readFileSync(path.join(dir(id), 'profile.json'), 'utf8'))
   const save = p => {
+    for (const m of p.mods || []) m.added ||= Date.now() // Installed tab "Newest first"
     writeAtomic(path.join(dir(p.id), 'profile.json'), JSON.stringify(p, null, 1))
     // Live share owners: push mod list changes to friends automatically (debounced) instead of pressing Update.
     if (p.publish && p.publishRev && settings().githubToken && shareRev(p) !== p.publishRev) {
@@ -735,13 +736,22 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
 
   const lanIp = () => Object.values(os.networkInterfaces()).flat().find(i => i.family === 'IPv4' && !i.internal)?.address || 'localhost'
 
+  // Profile size and leftover staging folders (failed installs, cancelled installers) that no mod uses.
+  const diskUsage = async pid => {
+    const p = load(pid), base = path.join(dir(pid), 'files'), used = new Set(p.mods.map(m => m.stage).filter(Boolean))
+    if (p.pendingFomod) used.add(`.fomod-${p.pendingFomod.stage}`)
+    const du = async d => { let n = 0; for (const f of await fs.promises.readdir(d, { recursive: true, withFileTypes: true }).catch(() => [])) if (f.isFile()) n += (await fs.promises.stat(path.join(f.parentPath ?? f.path, f.name)).catch(() => ({ size: 0 }))).size; return n }
+    const orphans = fs.existsSync(base) ? fs.readdirSync(base, { withFileTypes: true }).filter(d => d.isDirectory() && !used.has(d.name) && /^(\.fomod-|(thunderstore|modrinth|curseforge|nexus|gamebanana|workshop|local)-)/.test(d.name)).map(d => d.name) : []
+    const sizes = await Promise.all(orphans.map(o => du(path.join(base, o))))
+    return { total: await du(dir(pid)), mods: await du(base), orphans, orphanSize: sizes.reduce((a, b) => a + b, 0) }
+  }
   // One write at a time: profile.json is read-modify-written.
   let chain = Promise.resolve()
   const serial = fn => (...a) => { const r = chain.then(() => fn(...a)); chain = r.catch(() => {}); return r }
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
     'preview', 'checkFollow', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
-    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'watchGame', 'playCustom', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'watchGame', 'playCustom', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool', 'diskUsage',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -771,7 +781,8 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       for (const [k, ok] of Object.entries(LOOK)) if (k in patch && !ok(patch[k])) delete patch[k]
       if ('launcher' in patch && !['official', 'prism', 'multimc', 'custom'].includes(patch.launcher)) delete patch.launcher
       if ('updateMode' in patch && !['auto', 'ask', 'manual'].includes(patch.updateMode)) delete patch.updateMode
-      const pick = ['curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'prismPath', 'launcher', 'customCmd', 'autoStart', 'autoUpdate', 'updateMode', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
+      if ('profileOrder' in patch && !(Array.isArray(patch.profileOrder) && patch.profileOrder.length < 1000 && patch.profileOrder.every(x => typeof x === 'string' && /^\w+$/.test(x)))) delete patch.profileOrder
+      const pick = ['profileOrder', 'curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'prismPath', 'launcher', 'customCmd', 'autoStart', 'autoUpdate', 'updateMode', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
       return setSettingsRaw({ ...Object.fromEntries(pick.map(k => [k, patch[k]])), ...(patch.launch ? { launch: cleanLaunch(patch.launch) } : {}) })
     },
 
@@ -941,8 +952,14 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       const p = load(pid), m = p.mods.find(m => m.id === id)
       if (!m) throw new Error('Mod not installed')
       const rest = p.mods.filter(x => x.id !== id), i = rest.findIndex(x => x.id === afterId)
-      rest.splice(i < 0 ? rest.length : i + 1, 0, m)
+      rest.splice(afterId === null ? 0 : i < 0 ? rest.length : i + 1, 0, m) // null = move to the top
       return save({ ...p, mods: rest })
+    },
+    diskUsage,
+    cleanup: async pid => {
+      const { orphans } = await diskUsage(pid)
+      for (const o of orphans) fs.rmSync(inside(path.join(dir(pid), 'files'), o), { recursive: true, force: true })
+      return orphans.length
     },
     // Remove everything this profile put into the game folder (like Vortex "Purge").
     purge: id => {

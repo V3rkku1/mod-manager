@@ -21,6 +21,9 @@ const toast = (msg, err, action) => {
 const run = async fn => {
   try { return await fn() } catch (e) { const m = e.message.replace(/^Error invoking remote method '\w+': (Error: )?/, ''); m === 'Stopped' ? toast('Cancelled') : toast(m, true) }
 }
+// Rail order chosen by dragging (Settings.profileOrder); new profiles go last.
+let profileOrder = []
+const sortProfiles = () => { const r = id => { const i = profileOrder.indexOf(id); return i < 0 ? 1e9 : i }; profiles.sort((a, b) => r(a.id) - r(b.id)) }
 const setProfile = p => { profiles = profiles.map(x => x.id === p.id ? p : x); if (cur?.id === p.id) cur = p }
 const defSrc = p => ({ modrinth: 'modrinth', terraria: 'workshop' })[p.type] || p.type
 const curSrc = () => cur.type === 'modrinth' ? $('#src').value : defSrc(cur)
@@ -30,7 +33,7 @@ const warn = p => p?.warn?.forEach(w => toast(w, true))
 // Last profile + tab (per-device convenience, so localStorage is fine).
 const remember = () => { try { if (cur) localStorage.setItem('mm.last', JSON.stringify({ id: cur.id, tab })) } catch {} }
 async function refresh(id) {
-  profiles = await api.listProfiles()
+  profiles = await api.listProfiles(); sortProfiles()
   if (id === undefined && !cur && remembering) { try { const l = JSON.parse(localStorage.getItem('mm.last')); if (profiles.some(p => p.id === l.id)) id = l.id, tab = l.tab || tab } catch {} }
   cur = profiles.find(p => p.id === (id ?? cur?.id)) || profiles[0] || null
   render()
@@ -55,7 +58,7 @@ function render() {
 function renderRail() {
   const groups = [...new Set(profiles.map(p => p.group || ''))].sort()
   $('#rail').innerHTML = groups.map(g => (g ? `<div class="sep"></div><div class="rail-group" title="${esc(g)}">${esc(g)}</div>` : '')
-    + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''} ${running.has(p.id) ? 'playing' : ''}" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}${Object.keys(updates[p.id] || {}).length ? `<i class="rbadge">${Object.keys(updates[p.id]).length}</i>` : ''}</button>`).join('')).join('')
+    + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''} ${running.has(p.id) ? 'playing' : ''}" draggable="true" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}${Object.keys(updates[p.id] || {}).length ? `<i class="rbadge">${Object.keys(updates[p.id]).length}</i>` : ''}</button>`).join('')).join('')
     + (profiles.length ? '<div class="sep"></div>' : '')
     + `<button class="pfp add" id="add" data-tip="New profile">${ic('plus')}</button>`
     + `<button class="pfp gear" id="settings" data-tip="${setupLeft ? 'Finish setup' : 'Settings'}">${ic('gear')}${setupLeft ? `<i class="rbadge">${setupLeft}</i>` : ''}</button>`
@@ -112,7 +115,7 @@ const card = (m, src, installed) => `<div class="mod" data-id="${esc(m.id)}" dat
 const row = (m, needs) => {
   const up = updates[cur.id]?.[m.id], src = srcOf(m)
   const parents = needs[m.id] || []
-  return `<div class="mod ${m.disabled ? 'off' : ''} ${selected.has(m.id) ? 'sel' : ''}" data-id="${esc(m.id)}" data-src="${src}">
+  return `<div class="mod ${m.disabled ? 'off' : ''} ${selected.has(m.id) ? 'sel' : ''}" ${instSort === 'order' ? 'draggable="true"' : ''} data-id="${esc(m.id)}" data-src="${src}">
   <input type="checkbox" class="pick" data-act="select" ${selected.has(m.id) ? 'checked' : ''} title="Select">
   ${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy" decoding="async">` : '<div class="noicon"></div>'}
   <div class="body"><div class="top"><b>${esc(m.name)}</b><span class="tag">${esc(m.version)}</span>
@@ -182,9 +185,12 @@ function showInstalled() {
   allOffLabel()
   const needs = neededBy()
   const ids = new Set(cur.mods.map(m => m.id)); selected = new Set([...selected].filter(id => ids.has(id)))
-  const bar = cur.mods.length > 3 ? `<div class="ifilter"><div class="search">${ic('search')}<input id="ifind" type="search" placeholder="Filter ${cur.mods.length} mods" value="${esc(instFind)}" autocomplete="off"></div>
-    <select id="ishow">${[['all', 'All'], ['on', 'Enabled'], ['off', 'Disabled'], ['upd', 'Has update']].map(([v, l]) => `<option value="${v}" ${instShow === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''
-  $('#list').innerHTML = '<div id="banners"></div>' + bar + '<div id="bulk"></div>' + (cur.mods.map(m => row(m, needs)).join('')
+  const upd = updates[cur.id] || {}, SORTS = { name: (a, b) => a.name.localeCompare(b.name), new: (a, b) => (b.added || 0) - (a.added || 0), upd: (a, b) => !!upd[b.id] - !!upd[a.id], off: (a, b) => !!a.disabled - !!b.disabled }
+  const mods = SORTS[instSort] ? [...cur.mods].sort(SORTS[instSort]) : cur.mods
+  const bar = cur.mods.length > 3 ? `<div class="ifilter"><input type="checkbox" class="pick" id="selAll" title="Select all shown"><div class="search">${ic('search')}<input id="ifind" type="search" placeholder="Filter ${cur.mods.length} mods" value="${esc(instFind)}" autocomplete="off"></div>
+    <select id="ishow">${[['all', 'All'], ['on', 'Enabled'], ['off', 'Disabled'], ['upd', 'Has update']].map(([v, l]) => `<option value="${v}" ${instShow === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <select id="isort" title="Sort (only the view; drag mods in Load order to change which one wins)">${[['order', 'Load order'], ['name', 'Name'], ['new', 'Newest first'], ['upd', 'Updates first'], ['off', 'Disabled last']].map(([v, l]) => `<option value="${v}" ${instSort === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''
+  $('#list').innerHTML = '<div id="banners"></div>' + bar + '<div id="bulk"></div>' + (mods.map(m => row(m, needs)).join('')
     || `<div class="hint">${ic('package')}<b>No mods yet</b><span>Find some in Browse.</span></div>`)
   drawBulk()
   filterInstalled()
@@ -194,9 +200,10 @@ function showInstalled() {
 function drawBulk() {
   $('#bulk').innerHTML = selected.size ? `<div class="bulk"><b>${selected.size} selected</b><button data-bulk="update">${ic('up')} Update</button><button data-bulk="enable">${ic('check')} Enable</button>
     <button data-bulk="disable">${ic('x')} Disable</button><button data-bulk="remove" class="danger">${ic('trash')} Remove</button><button data-bulk="none" class="icon">Clear</button></div>` : ''
+  syncSelAll()
 }
 // Installed list filter: by name and enabled / disabled / has update. Kept while switching tabs.
-let instFind = '', instShow = 'all', instFor
+let instFind = '', instShow = 'all', instSort = 'order', instFor, lastPick
 function filterInstalled() {
   const q = instFind.toLowerCase(), upd = updates[cur.id] || {}, byId = new Map(cur.mods.map(m => [m.id, m]))
   for (const el of document.querySelectorAll('#list .mod')) {
@@ -204,9 +211,19 @@ function filterInstalled() {
     el.hidden = !(m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
       || (instShow === 'on' && m.disabled) || (instShow === 'off' && !m.disabled) || (instShow === 'upd' && !upd[m.id])
   }
+  syncSelAll()
+}
+// Select all shown / Shift-click a range (in the order shown, filters respected).
+const shownRows = () => [...document.querySelectorAll('#list .mod:not([hidden])')]
+const setPicked = (r, on) => { r.classList.toggle('sel', on); r.querySelector('.pick').checked = on; on ? selected.add(r.dataset.id) : selected.delete(r.dataset.id) }
+const syncSelAll = () => { const a = $('#selAll'); if (!a) return; const v = shownRows(), n = v.filter(r => selected.has(r.dataset.id)).length; a.checked = !!v.length && n === v.length; a.indeterminate = n > 0 && n < v.length }
+function pickMod(box, shift) {
+  const rows = shownRows(), el = box.closest('.mod'), a = rows.findIndex(r => r.dataset.id === lastPick), b = rows.indexOf(el)
+  for (const r of shift && a >= 0 ? rows.slice(Math.min(a, b), Math.max(a, b) + 1) : [el]) setPicked(r, box.checked)
+  lastPick = el.dataset.id; drawBulk()
 }
 $('#list').addEventListener('input', e => { if (e.target.id === 'ifind') instFind = e.target.value, filterInstalled() })
-$('#list').addEventListener('change', e => { if (e.target.id === 'ishow') instShow = e.target.value, filterInstalled() })
+$('#list').addEventListener('change', e => { if (e.target.id === 'ishow') instShow = e.target.value, filterInstalled(); if (e.target.id === 'isort') instSort = e.target.value, showInstalled() })
 const diffText = d => [d.add.length && `+${d.add.length} new`, d.change.length && `${d.change.length} changed (${esc(d.change.slice(0, 3).join(', '))}${d.change.length > 3 ? '…' : ''})`,
   d.remove.length && `-${d.remove.length} removed (${esc(d.remove.slice(0, 3).join(', '))}${d.remove.length > 3 ? '…' : ''})`].filter(Boolean).join(' · ')
 // Conflicts + "friend updated the pack" banners above the installed list.
@@ -307,6 +324,8 @@ async function doInstall(src, modId, vid) {
 }
 
 $('#list').onclick = async e => {
+  if (e.target.dataset.act === 'select') return pickMod(e.target, e.shiftKey)
+  if (e.target.id === 'selAll') return shownRows().forEach(r => setPicked(r, e.target.checked)), drawBulk()
   const pg = e.target.closest('[data-page]'); if (pg) return page = +pg.dataset.page, search(true)
   const bk = e.target.closest('[data-bulk]')?.dataset.bulk
   if (bk) return bulkAction(bk)
@@ -347,7 +366,7 @@ $('#list').onclick = async e => {
   if (!remove) toast(`Installed ${el.querySelector('b').textContent}`)
 }
 $('#list').onchange = async e => {
-  if (e.target.dataset.act === 'select') { const id = e.target.closest('.mod').dataset.id; e.target.checked ? selected.add(id) : selected.delete(id); e.target.closest('.mod').classList.toggle('sel', e.target.checked); return drawBulk() }
+  if (e.target.dataset.act === 'select') return
   if (e.target.dataset.act !== 'enable') return
   const p = await run(() => api.setDisabled(cur.id, e.target.closest('.mod').dataset.id, !e.target.checked))
   if (p) setProfile(p), e.target.closest('.mod').classList.toggle('off', !e.target.checked)
@@ -785,7 +804,7 @@ async function showOptions() {
   if (cur.type !== 'modrinth') return $('#list').innerHTML = `<form class="opts" id="optsForm">
     <label>STEAM LAUNCH ARGUMENTS <span class="muted small">(used by Play)</span><input name="args" value="${esc(o.args || '')}" placeholder="-windowed -nosplash"></label>
     <div class="row"><button class="primary">${ic('check')} Save options</button><button type="button" id="playVanilla">${ic('play')} Play without mods</button></div>
-    <p class="muted small">"Play without mods" removes this profile's files from the game folder and starts the game. Your mod list is kept; press Deploy or Play to bring the mods back.</p></form>` + await gameExtras()
+    <p class="muted small">"Play without mods" removes this profile's files from the game folder and starts the game. Your mod list is kept; press Deploy or Play to bring the mods back.</p></form>` + await gameExtras() + diskBox, showDisk()
   const javas = await api.javaList().catch(() => [])
   $('#list').innerHTML = `<form class="opts" id="optsForm">
     <div class="row"><label>MAX MEMORY (MB)<input name="maxMem" type="number" min="512" step="512" value="${o.maxMem || ''}" placeholder="Default"></label>
@@ -804,7 +823,15 @@ async function showOptions() {
     <h4 class="muted">INSTANCE</h4>
     <div class="row"><button type="button" id="optRepair">${ic('wrench')} Repair game files</button><button type="button" id="optExport">${ic('file')} Export .mrpack</button>
       <button type="button" id="optDup">${ic('copy')} Duplicate</button><button type="button" id="optDir">${ic('folder')} Open folder</button></div>
-    <p class="muted small">Loader: ${esc(cur.mc.loader)} ${esc(cur.mc.loaderVersion || '(latest on first launch)')} · Game folder: ${esc(cur.target)}</p></form>`
+    <p class="muted small">Loader: ${esc(cur.mc.loader)} ${esc(cur.mc.loaderVersion || '(latest on first launch)')} · Game folder: ${esc(cur.target)}</p></form>` + diskBox
+  showDisk()
+}
+const diskBox = `<div class="opts"><h4 class="muted">DISK SPACE</h4><div class="row" id="disk"><span class="muted small">Measuring…</span></div></div>`
+async function showDisk() {
+  const id = cur.id, d = await api.diskUsage(id).catch(() => null), el = $('#disk')
+  if (!d || !el || cur.id !== id) return
+  el.innerHTML = `<span class="small">This profile uses <b>${gb(d.total)}</b> (downloaded mods ${gb(d.mods)}).${d.orphans.length ? ` <b>${gb(d.orphanSize)}</b> is left over from removed or failed installs.` : ' Nothing to clean up.'}</span>
+    ${d.orphans.length ? `<button type="button" id="diskClean" class="grow0">${ic('trash')} Clean up</button>` : ''}`
 }
 
 $('#list').addEventListener('click', async e => {
@@ -850,6 +877,25 @@ $('#list').addEventListener('submit', async e => {
 
 // Local files: button + drag and drop
 const addPaths = paths => paths.length && run(async () => { let p; for (const f of paths) p = await fm(await api.addLocal(cur.id, [f])); setProfile(p); tab = 'installed'; render(); toast(`Added ${paths.length} file(s)`) })
+// Paste a list: Modrinth / Thunderstore links become IDs; anything else is tried as an ID, then as a search (top result).
+$('#pasteList').onclick = () => { $('#pasteText').value = ''; $('#pasteDlg').showModal() }
+const lineId = l => l.match(/modrinth\.com\/\w+\/([\w.-]+)/)?.[1] || (([, ns, n]) => ns && `${ns}-${n}`)(l.match(/thunderstore\.io\/c\/[\w-]+\/p\/([\w.-]+)\/([\w.-]+)/) || [])
+$('#pasteForm').onsubmit = async e => {
+  e.preventDefault(); $('#pasteDlg').close()
+  const id = cur.id, src = defSrc(cur), b = $('#pasteList'), label = b.lastChild.textContent, failed = []
+  const lines = [...new Set($('#pasteText').value.split(/\r?\n/).map(l => l.trim()).filter(Boolean))].slice(0, 200)
+  b.disabled = true
+  for (const [i, l] of lines.entries()) {
+    b.lastChild.textContent = ` Installing ${i + 1}/${lines.length}…`
+    let p = await api.install(id, src, lineId(l) || l).catch(() => null)
+    if (!p) { const hit = (await api.search(id, src, l, 1, { kind: 'mod', categories: [] }).catch(() => null))?.items?.[0]; if (hit) p = await api.install(id, src, hit.id).catch(() => null) }
+    p = await fm(p)
+    if (p) setProfile(p), warn(p); else failed.push(l)
+  }
+  b.disabled = false; b.lastChild.textContent = label
+  if (cur?.id === id) tab = 'installed', render()
+  toast(failed.length ? `Installed ${lines.length - failed.length} of ${lines.length}. Not found: ${failed.join(', ')}` : `Installed ${lines.length} mod${lines.length === 1 ? '' : 's'}`, !!failed.length)
+}
 $('#addFiles').onclick = () => $('#fileInput').click()
 $('#fileInput').onchange = e => { addPaths([...e.target.files].map(filePath)); e.target.value = '' }
 let dragDepth = 0
@@ -857,6 +903,33 @@ document.addEventListener('dragenter', e => { if (cur && e.dataTransfer.types.in
 document.addEventListener('dragleave', () => { if (--dragDepth <= 0) dragDepth = 0, $('#drop').hidden = true })
 document.addEventListener('dragover', e => e.preventDefault())
 document.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; $('#drop').hidden = true; if (cur) addPaths([...e.dataTransfer.files].map(filePath)) })
+
+// Drag and drop reordering: installed mods (load order: lower wins) and profiles on the rail (Discord-style; dropping next to a grouped profile joins its group).
+const dropMark = (el, e) => { dropClear(true); const r = el.getBoundingClientRect(); el.classList.add(e.clientY > r.top + r.height / 2 ? 'dropa' : 'dropb') }
+const dropClear = keepDrag => document.querySelectorAll(keepDrag ? '.dropa, .dropb' : '.dropa, .dropb, .dragging').forEach(x => x.classList.remove('dropa', 'dropb', ...(keepDrag ? [] : ['dragging'])))
+let modDrag, railDrag
+$('#list').addEventListener('dragstart', e => { const el = tab === 'installed' && e.target.closest?.('.mod[draggable=true]'); if (el) modDrag = el.dataset.id, e.dataTransfer.effectAllowed = 'move', el.classList.add('dragging') })
+$('#list').addEventListener('dragover', e => { const el = modDrag && e.target.closest('.mod'); if (el) e.preventDefault(), dropMark(el, e) })
+$('#list').addEventListener('drop', async e => {
+  const el = modDrag && e.target.closest('.mod'), id = modDrag; if (!el) return
+  e.preventDefault(); e.stopPropagation(); const after = el.classList.contains('dropa'); dropClear()
+  if (el.dataset.id === id) return
+  const ids = cur.mods.map(m => m.id).filter(x => x !== id), i = ids.indexOf(el.dataset.id)
+  const p = await run(() => api.moveMod(cur.id, id, after ? el.dataset.id : i > 0 ? ids[i - 1] : null))
+  if (p) setProfile(p), showInstalled(), toast('Order changed — lower in the list wins. Deploy to apply')
+})
+$('#rail').addEventListener('dragstart', e => { const b = e.target.closest('[data-id]'); if (b) railDrag = b.dataset.id, e.dataTransfer.effectAllowed = 'move', $('#tip').hidden = true })
+$('#rail').addEventListener('dragover', e => { const b = railDrag && e.target.closest('[data-id]'); if (b) e.preventDefault(), dropMark(b, e) })
+$('#rail').addEventListener('drop', async e => {
+  const b = railDrag && e.target.closest('[data-id]'), id = railDrag; if (!b) return
+  e.preventDefault(); e.stopPropagation(); const after = b.classList.contains('dropa'); dropClear()
+  if (b.dataset.id === id) return
+  const moved = profiles.find(p => p.id === id), target = profiles.find(p => p.id === b.dataset.id), list = profiles.filter(p => p !== moved)
+  list.splice(list.indexOf(target) + after, 0, moved); profiles = list; profileOrder = list.map(p => p.id)
+  if ((moved.group || '') !== (target.group || '')) { const p = await run(() => api.updateProfile(id, { group: target.group || '' })); if (p) setProfile(p) }
+  renderRail(); api.saveSettings({ profileOrder }).catch(() => {})
+})
+document.addEventListener('dragend', () => { modDrag = railDrag = null; dropClear() })
 
 // Rail context menu
 let ctxId = null
@@ -1063,7 +1136,7 @@ $('#quickDlg').onclick = e => { if (e.target.id === 'quickDlg') $('#quickDlg').c
 api.getSettings().then(s => {
   look = { ...LOOK, ...Object.fromEntries(Object.keys(LOOK).filter(k => s[k] !== undefined).map(k => [k, s[k]])) }
   if (!('accent' in s) && s.theme === 'dark') look.theme = 'midnight' // old default -> new darker default
-  applyLook(look); remembering = s.rememberLast !== false
+  applyLook(look); remembering = s.rememberLast !== false; profileOrder = s.profileOrder || []
 }).finally(() => refresh().then(() => { if (!$('#settingsDlg').open) api.setupStatus().then(s => { setupLeft = s.minecraftLauncher || s.msLogin || s.launcherFound ? 0 : 1; render() }).catch(() => {}) }))
 
 // ---- Bulk actions, orphans, crash helper, download queue ----
@@ -1485,6 +1558,7 @@ $('#list').addEventListener('click', async e => {
   if (t.id === 'toolAdd') { const exe = await api.openFile(['exe', 'bat', 'cmd']); if (!exe) return; const name = await ask('Tool name', exe.split(/[\\/]/).pop().replace(/\.\w+$/, '')); if (name !== null) { const args = await ask('Arguments (optional)', ''); save([...(cur.tools || []), { name, exe, args: args || '' }]) } }
   if (t.dataset.lo) { const row = t.closest('.lo'), to = +t.dataset.lo < 0 ? row.previousElementSibling : row.nextElementSibling; if (to?.querySelector('[data-lo]:not([disabled])')) +t.dataset.lo < 0 ? to.before(row) : to.after(row) }
   if (t.id === 'loSave') { const rows = [...document.querySelectorAll('#loList .lo')]; const p = await run(() => api.setLoadOrder(id, rows.map(r => r.dataset.plug), rows.filter(r => !r.querySelector('input').checked).map(r => r.dataset.plug))); if (p) setProfile(p), toast('Load order saved — Deploy to apply') }
+  if (t.id === 'diskClean') { t.disabled = true; const n = await run(() => api.cleanup(id)); if (n != null) toast(`Removed ${n} leftover folder${n === 1 ? '' : 's'}`); return showDisk() }
   if (t.id === 'purge') { const p = await run(() => api.purge(id)); if (p) setProfile(p), toast('Mods removed from the game folder') }
   if (t.id === 'collOpen') { $('#collQ').value = ''; $('#collDlg').showModal(); collSearch() }
 })
