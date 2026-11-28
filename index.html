@@ -68,8 +68,6 @@
         <button data-tab="logs" class="mcOnly"><svg class="i"><use href="#i-terminal"/></svg> Logs</button>
         <button data-tab="server" class="mcOnly"><svg class="i"><use href="#i-server"/></svg> Server</button>
         <button data-tab="options"><svg class="i"><use href="#i-sliders"/></svg> Options</button>
-        <button data-tab="lxprojects" class="lxOnly"><svg class="i"><use href="#i-package"/></svg> Projects <em id="lxCount"></em></button>
-        <button data-tab="lxsettings" class="lxOnly"><svg class="i"><use href="#i-sliders"/></svg> Settings</button>
       </div>
       <div id="foot">
         <div class="target">
@@ -109,7 +107,6 @@
       </header>
       <div id="chips" hidden></div>
       <section id="list"></section>
-      <section id="lxList"></section>
     </main>
 
     <div id="empty">
@@ -135,7 +132,6 @@
       <label><input type="radio" name="type" value="nexus"><svg class="i"><use href="#i-star"/></svg>Nexus Mods</label>
       <label><input type="radio" name="type" value="gamebanana"><svg class="i"><use href="#i-banana"/></svg>GameBanana</label>
       <label><input type="radio" name="type" value="terraria"><svg class="i"><use href="#i-globe"/></svg>Terraria</label>
-      <label><input type="radio" name="type" value="recomp"><svg class="i"><use href="#i-terminal"/></svg>Recomps</label>
       <label><input type="radio" name="type" value="import"><svg class="i"><use href="#i-import"/></svg>Import</label>
     </div>
     <div class="pick">
@@ -148,7 +144,6 @@
     </div>
     <label class="mc">START WITH<select name="template"><option value="">No mods</option><option value="perf">Performance (faster FPS, less memory)</option><option value="plus">Vanilla+ (performance + minimap, item info, quality of life)</option></select></label>
     <label class="mc check"><input type="checkbox" id="snapshots" class="switch"> Show snapshots</label>
-    <p class="rc muted small">Recomps are GitHub projects (like the GTA 6 VIctory builds) that are downloaded, built and run with your own game. Four come preset; you can add your own. Name it below (default: GTA 6).</p>
     <p class="terr muted small">tModLoader mods from the Steam Workshop. Needs tModLoader installed (free on Steam).</p>
     <div class="imp">
       <label>SHARE CODE<textarea name="code" rows="3" placeholder="Paste an MM1… code, or an r2modman profile code"></textarea></label>

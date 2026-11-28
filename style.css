@@ -175,7 +175,7 @@ menu button:not(.primary):hover { text-decoration: underline; background: none; 
 .seg label:hover { background: var(--hover); color: var(--text); }
 .seg input { display: none; }
 .seg label:has(:checked) { background: var(--accent); color: #fff; }
-form:has([value=modrinth]:checked) .pick, form:has([value=import]:checked) .pick, form:has([value=terraria]:checked) .pick, form:has([value=recomp]:checked) .pick, form:not(:has([value=recomp]:checked)) .rc, form:not(:has([value=terraria]:checked)) .terr, form:not(:has([value=modrinth]:checked)) .mc, form:not(:has([value=import]:checked)) .imp { display: none; }
+form:has([value=modrinth]:checked) .pick, form:has([value=import]:checked) .pick, form:has([value=terraria]:checked) .pick, form:not(:has([value=terraria]:checked)) .terr, form:not(:has([value=modrinth]:checked)) .mc, form:not(:has([value=import]:checked)) .imp { display: none; }
 #games { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; max-height: 300px; overflow-y: auto; margin-top: 10px; padding: 2px; }
 .game { display: grid; gap: 6px; padding: 0; background: none; text-align: center; font-size: 12px; color: var(--text); white-space: normal; }
 .game:hover { background: none; }
@@ -503,28 +503,7 @@ button[data-href] { color: #fff; text-decoration: none !important; }
 .addsrv { margin-top: 10px; } .addsrv button { flex: none; }
 .ifilter { display: flex; gap: 8px; margin-bottom: 10px; } .ifilter .search { flex: 1; } .ifilter .search input { width: 100%; } .ifilter select { width: auto; }
 .mod[hidden] { display: none; }
-/* GTA 6 (Launcher-X) page: same layout as a profile, its own tabs, projects as mod-like cards. */
-#lxList, .lxOnly { display: none; } body.lxv .lxOnly { display: flex; }
-body.lxv #list, body.lxv #chips, body.lxv #foot, body.lxv #rename, body.lxv #tabs > :not(.lxOnly), body.lxv main > header > :not(.hd):not(#title) { display: none !important; }
-body.lxv #lxList { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; gap: 8px; align-content: start; padding: 16px; overflow-y: auto; flex: 1; }
-.lxicon { display: grid; place-items: center; font-weight: 700; color: var(--head); }
-.lxp .actions { display: flex; gap: 6px; align-items: center; } .lxp .actions button:not(.icon) { padding: 8px 12px; }
-.lxp .body { cursor: default; } .lxp .body:hover b { text-decoration: none; }
-.lxform { max-width: none; } .lxform h3 { margin: 0; color: var(--head); font-size: 15px; }
 #updNotes { -webkit-app-region: no-drag; font-size: 12px; margin-left: 8px; }
 #notesDlg { width: min(640px, calc(100vw - 32px)); } #notesText { white-space: pre-wrap; max-height: 60vh; overflow-y: auto; font-size: 14px; line-height: 1.5; }
 .appver { align-items: center; } .appver > * { flex: none; }
-.lxp .body p a { color: var(--accent); cursor: pointer; }
-.lxbar { display: flex; gap: 8px; align-items: center; } .lxbar select { flex: 1; } .lxbar .play { flex: none; min-width: 140px; }
-.lxlog { margin: -4px 0 0; max-height: 260px; overflow: auto; padding: 10px 12px; border-radius: 8px; background: var(--input); font: 12px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
-.lxpanel { margin-top: -4px; padding: 12px 14px; border-radius: 8px; background: var(--card); max-width: none; display: grid; gap: 8px; }
-.lxpanel p { margin: 0; } .lxp button.tag { border: 0; cursor: pointer; text-decoration: none; }
-.lxp .actions .prep { opacity: 1; } .lxp .actions .stop { background: var(--danger); }
-.lxp .top { flex-wrap: wrap; row-gap: 4px; }
 #chgBody section.chg + section.chg { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); } #chgBody menu { position: sticky; bottom: 0; }
-details.more { position: relative; } details.more > summary { list-style: none; cursor: pointer; padding: 6px 10px; border-radius: 6px; color: var(--muted); font-size: 18px; line-height: 1; }
-details.more > summary::-webkit-details-marker { display: none; } details.more[open] > summary, details.more > summary:hover { background: var(--hover); color: var(--text); }
-details.more .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 220px; display: grid; gap: 2px; padding: 6px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
-details.more .menu button { justify-content: flex-start; background: none; color: var(--text); padding: 8px 10px; gap: 8px; } details.more .menu button:hover { background: var(--hover); }
-details.more .menu .danger { color: var(--danger); } .lxhint { margin: -2px 2px 0; } .lxhint:empty { display: none; }
-.mod.lxp { content-visibility: visible; } .mod.lxp:has(details.more[open]) { position: relative; z-index: 5; } /* the ⋯ menu may hang over the next card */

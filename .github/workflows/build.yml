@@ -19,9 +19,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # Launcher-X end to end in real Windows PowerShell (git clone / pull / build / run).
-      - run: node test-launcherx.js
-        timeout-minutes: 5 # a hanging build step must fail the run, not stall it
       # Writes latest*.yml next to installers; the app's auto-updater reads them from the GitHub Release.
       - run: npx electron-builder --win --publish never
       - uses: actions/upload-artifact@v4
