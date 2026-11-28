@@ -17,6 +17,10 @@ const read = f => fs.readFileSync(path.join(tmp, 'game', f), 'utf8')
   await core.deploy(p.id); assert.strictEqual(read('textures/sky.dds'), 'B')
   await core.moveMod(p.id, 'local:A.zip', 'local:B.zip'); await core.deploy(p.id)
   assert.strictEqual(read('textures/sky.dds'), 'A', 'priority change flips the winner')
+  // Incremental deploy: unchanged files are not rewritten; a file the game edited is restored.
+  const esp = path.join(tmp, 'game', 'A.esp'), t0 = fs.statSync(esp).mtimeMs
+  fs.writeFileSync(path.join(tmp, 'game', 'textures/sky.dds'), 'X'); await core.deploy(p.id)
+  assert.strictEqual(fs.statSync(esp).mtimeMs, t0, 'unchanged file skipped'); assert.strictEqual(read('textures/sky.dds'), 'A', 'edited file restored')
   // Load order: masters first, custom order kept
   const lo = await core.loadOrder(p.id)
   assert.deepStrictEqual(lo.plugins.map(x => x.name), ['B.esm', 'A.esp'])

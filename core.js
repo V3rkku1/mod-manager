@@ -448,19 +448,26 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const deployRaw = (id, { vanilla } = {}) => {
     const p = load(id)
     if (!p.target) throw new Error('Set the target folder first')
-    for (const f of p.deployed || []) remove(p.target, f)
     const on = vanilla ? [] : p.mods.filter(m => !m.disabled)
     // Later mods in the list win file conflicts; shared configs (extra) win over everything.
     const src = new Map()
     for (const m of on) for (const f of m.files) src.set(f, mf(p, m, f))
     if (!vanilla) for (const f of p.extra || []) src.set(f, inside(path.join(dir(p.id), 'files'), f))
-    p.deployed = [...src.keys()]
+    for (const f of p.deployed || []) if (!src.has(f)) remove(p.target, f)
+    // Which staged file each target came from last time: a different winner is always copied.
+    const before = Object.fromEntries((p.deployed || []).map((f, i) => [f, p.deployedFrom?.[i]]))
+    p.deployed = [...src.keys()]; p.deployedFrom = [...src.values()]
     const link = settings().deployMode === 'hardlink'
+    // Incremental: a file already deployed with the same size + mtime (or the same hard link) is left alone, so Play on a big pack is fast.
+    const same = (a, b) => { try { const x = fs.statSync(a), y = fs.statSync(b); return x.size === y.size && (x.ino === y.ino || x.mtimeMs === y.mtimeMs) } catch { return false } }
     for (const [f, from] of src) {
       const to = inside(p.target, f)
+      if (before[f] === from && same(from, to)) continue
       fs.mkdirSync(path.dirname(to), { recursive: true })
+      fs.rmSync(to, { force: true }) // never write through an old hard link into the staged copy
       if (link) { try { fs.linkSync(from, to); continue } catch {} } // different drive: fall back to copying
       fs.copyFileSync(from, to)
+      const st = fs.statSync(from); fs.utimesSync(to, st.atimeMs / 1000, st.mtimeMs / 1000)
     }
     // Bethesda games read the plugin load order from %LOCALAPPDATA%/<game>/Plugins.txt.
     const pre = presetOf(p)
@@ -788,7 +795,20 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     // Returns { [modId]: newVersion } for mods with a newer compatible release.
     checkUpdates: async pid => {
       const p = load(pid)
-      const latest = await Promise.all(p.mods.map(m => m.src === 'local' || m.pinned ? null : S[srcOf(p, m)].latest(p, m).catch(() => null)))
+      // Modrinth mods: one batched request by file hash instead of one request per mod (big packs hit the rate limit).
+      const batch = {}
+      if (p.type === 'modrinth' && p.mc.loader !== 'vanilla') {
+        const hashOf = {}
+        for (const m of p.mods) if (srcOf(p, m) === 'modrinth' && !m.pinned && !m.pack && m.files.length === 1 && m.files[0].startsWith('mods/'))
+          try { hashOf[crypto.createHash('sha1').update(fs.readFileSync(mf(p, m, m.files[0]))).digest('hex')] = m.id } catch {}
+        if (Object.keys(hashOf).length) {
+          const r = await json(`${MR}/version_files/update`, { 'content-type': 'application/json' },
+            { method: 'POST', body: JSON.stringify({ hashes: Object.keys(hashOf), algorithm: 'sha1', loaders: [p.mc.loader], game_versions: [p.mc.version] }) }).catch(() => null)
+          // A mod with no hit (file changed, other project) falls back to the per-mod check below.
+          for (const [h, v] of Object.entries(r || {})) if (v.project_id === hashOf[h]) batch[hashOf[h]] = { version: v.version_number, vid: v.id }
+        }
+      }
+      const latest = await Promise.all(p.mods.map(m => m.src === 'local' || m.pinned ? null : batch[m.id] || S[srcOf(p, m)].latest(p, m).catch(() => null)))
       return Object.fromEntries(p.mods.map((m, i) => [m.id, latest[i]]).filter(([m, v], i) => v && v.vid !== vidOf(p.mods[i])).map(([id, v]) => [id, { version: v.version, vid: String(v.vid) }]))
     },
     update: async (pid, id) => {

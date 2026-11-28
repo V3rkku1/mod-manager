@@ -329,10 +329,12 @@ body.mc #deploy { display: none; }
 .mod .pick { width: 18px; height: 18px; flex: none; accent-color: var(--accent); cursor: pointer; padding: 0; }
 .mod.sel { border-color: var(--accent); }
 .actions .icon.on { color: var(--warn); }
+#bulk { display: contents; }
 .bulk { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 8px; background: var(--accent); color: #fff; position: sticky; top: 0; z-index: 2; }
 .bulk b { margin-right: auto; }
 .bulk button { background: rgba(255,255,255,.15); }
 .bulk button:hover { background: rgba(255,255,255,.3); }
+.bulk button.icon { color: #fff; padding: 6px 12px; }
 #banners { display: grid; gap: 8px; }
 #banners:empty { display: none; }
 .banner { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 15%, transparent); border: 1px solid var(--accent); }

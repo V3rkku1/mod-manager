@@ -46,14 +46,21 @@ let selected = new Set()
 let setupLeft = 0, running = new Set(), status = {}, filterCache = {}, chips = new Set(), pages = 1, remembering = true
 
 function render() {
+  renderRail()
+  $('#app').classList.toggle('empty', !cur)
+  if (!cur) return
+  renderMain()
+}
+// Rail only: background checks call this so an open form or console isn't rebuilt.
+function renderRail() {
   const groups = [...new Set(profiles.map(p => p.group || ''))].sort()
   $('#rail').innerHTML = groups.map(g => (g ? `<div class="sep"></div><div class="rail-group" title="${esc(g)}">${esc(g)}</div>` : '')
     + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''} ${running.has(p.id) ? 'playing' : ''}" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}${Object.keys(updates[p.id] || {}).length ? `<i class="rbadge">${Object.keys(updates[p.id]).length}</i>` : ''}</button>`).join('')).join('')
     + (profiles.length ? '<div class="sep"></div>' : '')
     + `<button class="pfp add" id="add" data-tip="New profile">${ic('plus')}</button>`
     + `<button class="pfp gear" id="settings" data-tip="${setupLeft ? 'Finish setup' : 'Settings'}">${ic('gear')}${setupLeft ? `<i class="rbadge">${setupLeft}</i>` : ''}</button>`
-  $('#app').classList.toggle('empty', !cur)
-  if (!cur) return
+}
+function renderMain() {
   const mc = cur.type === 'modrinth'
   document.body.classList.toggle('mc', mc)
   document.body.classList.toggle('mc-banner', mc && !cur.banner)
@@ -89,6 +96,8 @@ function updateBadges() {
   $('#updAll').lastChild.textContent = ` Update all (${n})`
 }
 
+// { depId: [names of mods that need it] } in one pass (per-row filtering was O(n²) on big packs).
+const neededBy = () => { const o = {}; for (const x of cur.mods) for (const d of x.deps || []) (o[d] ||= []).push(x.name); return o }
 const installedBtn = `<span class="a">${ic('check')} Installed</span><span class="b">${ic('trash')} Remove</span>`
 const card = (m, src, installed) => `<div class="mod" data-id="${esc(m.id)}" data-src="${src}">
   ${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy" decoding="async">` : '<div class="noicon"></div>'}
@@ -100,9 +109,9 @@ const card = (m, src, installed) => `<div class="mod" data-id="${esc(m.id)}" dat
     <button class="act ${installed ? 'done' : ''}" data-act="toggle">${installed ? installedBtn : `${ic('download')} Install`}</button>
   </div></div>`
 
-const row = m => {
+const row = (m, needs) => {
   const up = updates[cur.id]?.[m.id], src = srcOf(m)
-  const parents = cur.mods.filter(x => x.deps?.includes(m.id)).map(x => x.name)
+  const parents = needs[m.id] || []
   return `<div class="mod ${m.disabled ? 'off' : ''} ${selected.has(m.id) ? 'sel' : ''}" data-id="${esc(m.id)}" data-src="${src}">
   <input type="checkbox" class="pick" data-act="select" ${selected.has(m.id) ? 'checked' : ''} title="Select">
   ${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy" decoding="async">` : '<div class="noicon"></div>'}
@@ -160,7 +169,7 @@ async function loadFilters() {
   const src = curSrc(), kind = $('#kind').value, key = `${cur.id}:${src}:${kind}`
   const f = filterCache[key] ??= await api.filters(cur.id, src, kind).catch(() => ({}))
   if (curSrc() !== src) return
-  $('#chips').innerHTML = (f.categories || []).map(c => `<button class="chip ${chips.has(c.id) ? 'on' : ''}" data-chip="${esc(c.id)}">${esc(c.name)}</button>`).join('')
+  $('#chips').innerHTML = (f.categories || []).map(c => `<button class="chip ${chips.has(c.id) ? 'on' : ''}" data-chip="${esc(c.id)}">${esc(c.name.replace(/-/g, ' '))}</button>`).join('')
   if ((f.categories || []).length > 12) $('#chips').insertAdjacentHTML('beforeend', `<button class="chip more" data-more>${$('#chips').classList.contains('open') ? 'Less' : 'More…'}</button>`)
   $('#chips').hidden = !f.categories?.length
   const sec = $('#section'), v = sec.value
@@ -171,22 +180,27 @@ async function loadFilters() {
 function showInstalled() {
   if (instFor !== cur.id) instFind = '', instShow = 'all', instFor = cur.id
   allOffLabel()
-  selected = new Set([...selected].filter(id => cur.mods.some(m => m.id === id)))
-  const bulk = selected.size ? `<div class="bulk"><b>${selected.size} selected</b><button data-bulk="update">${ic('up')} Update</button><button data-bulk="enable">${ic('check')} Enable</button>
-    <button data-bulk="disable">${ic('x')} Disable</button><button data-bulk="remove" class="danger">${ic('trash')} Remove</button><button data-bulk="none" class="icon">Clear</button></div>` : ''
+  const needs = neededBy()
+  const ids = new Set(cur.mods.map(m => m.id)); selected = new Set([...selected].filter(id => ids.has(id)))
   const bar = cur.mods.length > 3 ? `<div class="ifilter"><div class="search">${ic('search')}<input id="ifind" type="search" placeholder="Filter ${cur.mods.length} mods" value="${esc(instFind)}" autocomplete="off"></div>
     <select id="ishow">${[['all', 'All'], ['on', 'Enabled'], ['off', 'Disabled'], ['upd', 'Has update']].map(([v, l]) => `<option value="${v}" ${instShow === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''
-  $('#list').innerHTML = '<div id="banners"></div>' + bar + bulk + (cur.mods.map(row).join('')
+  $('#list').innerHTML = '<div id="banners"></div>' + bar + '<div id="bulk"></div>' + (cur.mods.map(m => row(m, needs)).join('')
     || `<div class="hint">${ic('package')}<b>No mods yet</b><span>Find some in Browse.</span></div>`)
+  drawBulk()
   filterInstalled()
   banners()
+}
+// Bulk bar redrawn alone: ticking a checkbox no longer rebuilds every row.
+function drawBulk() {
+  $('#bulk').innerHTML = selected.size ? `<div class="bulk"><b>${selected.size} selected</b><button data-bulk="update">${ic('up')} Update</button><button data-bulk="enable">${ic('check')} Enable</button>
+    <button data-bulk="disable">${ic('x')} Disable</button><button data-bulk="remove" class="danger">${ic('trash')} Remove</button><button data-bulk="none" class="icon">Clear</button></div>` : ''
 }
 // Installed list filter: by name and enabled / disabled / has update. Kept while switching tabs.
 let instFind = '', instShow = 'all', instFor
 function filterInstalled() {
-  const q = instFind.toLowerCase(), upd = updates[cur.id] || {}
+  const q = instFind.toLowerCase(), upd = updates[cur.id] || {}, byId = new Map(cur.mods.map(m => [m.id, m]))
   for (const el of document.querySelectorAll('#list .mod')) {
-    const m = cur.mods.find(x => x.id === el.dataset.id); if (!m) continue
+    const m = byId.get(el.dataset.id); if (!m) continue
     el.hidden = !(m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
       || (instShow === 'on' && m.disabled) || (instShow === 'off' && !m.disabled) || (instShow === 'upd' && !upd[m.id])
   }
@@ -333,7 +347,7 @@ $('#list').onclick = async e => {
   if (!remove) toast(`Installed ${el.querySelector('b').textContent}`)
 }
 $('#list').onchange = async e => {
-  if (e.target.dataset.act === 'select') { const id = e.target.closest('.mod').dataset.id; e.target.checked ? selected.add(id) : selected.delete(id); return showInstalled() }
+  if (e.target.dataset.act === 'select') { const id = e.target.closest('.mod').dataset.id; e.target.checked ? selected.add(id) : selected.delete(id); e.target.closest('.mod').classList.toggle('sel', e.target.checked); return drawBulk() }
   if (e.target.dataset.act !== 'enable') return
   const p = await run(() => api.setDisabled(cur.id, e.target.closest('.mod').dataset.id, !e.target.checked))
   if (p) setProfile(p), e.target.closest('.mod').classList.toggle('off', !e.target.checked)
@@ -575,7 +589,8 @@ async function showGames() {
   ).join('') || '<p class="muted">No games found</p>'
   $('#games').list = list
 }
-$('#gameQ').oninput = () => { clearTimeout(timer); timer = setTimeout(showGames, newType() === 'thunderstore' || newType() === 'curseforge' ? 0 : 350) }
+let gameTimer
+$('#gameQ').oninput = () => { clearTimeout(gameTimer); gameTimer = setTimeout(showGames, newType() === 'thunderstore' || newType() === 'curseforge' ? 0 : 350) }
 $('#newForm').onchange = e => { if (e.target.name === 'type') picked = null, $('#gameQ').value = '', showGames() }
 $('#games').onclick = e => {
   const b = e.target.closest('.game'); if (!b) return
@@ -958,7 +973,8 @@ $('#histList').onclick = async e => {
 // ---- Favorites (per device; stored with the card so the list shows offline) ----
 let favMode = false
 const favKey = src => `${src}:${src === 'modrinth' || src === 'curseforge' && cur.type === 'modrinth' ? 'mc' : cur.game || cur.type}`
-const favs = () => { try { return JSON.parse(localStorage.getItem('mm.favs')) || {} } catch { return {} } }
+let favCache
+const favs = () => { try { return favCache ||= JSON.parse(localStorage.getItem('mm.favs')) || {} } catch { return {} } }
 const isFav = (src, id) => !!favs()[favKey(src)]?.[id]
 function toggleFav(src, el, id) {
   const all = favs(), k = favKey(src), bucket = all[k] ||= {}
@@ -972,16 +988,15 @@ $('#favs').onclick = () => { favMode = !favMode; $('#favs').classList.toggle('on
 // ---- Background update check: badges on the profile rail + one desktop notification ----
 async function backgroundUpdates() {
   let total = 0
-  for (const p of profiles) {
-    if (!p.mods.some(m => m.src !== 'local') || p.follow) continue // followed packs get versions from the owner
+  // followed packs get versions from the owner
+  await Promise.all(profiles.filter(p => p.mods.some(m => m.src !== 'local') && !p.follow).map(async p => {
     const r = await api.checkUpdates(p.id).catch(() => null)
-    if (!r) continue
-    updates[p.id] = r; total += Object.keys(r).length
-  }
-  const friends = []
-  for (const p of profiles.filter(p => p.follow)) if ((await api.checkFollow(p.id).catch(() => null))?.changed) friends.push(p.name)
+    if (r) updates[p.id] = r, total += Object.keys(r).length
+  }))
+  const friends = (await Promise.all(profiles.filter(p => p.follow).map(async p => (await api.checkFollow(p.id).catch(() => null))?.changed && p.name))).filter(Boolean)
   if (friends.length) try { new Notification('Mod Manager', { body: `Your friend updated ${friends.join(', ')}. Open it and press Sync now.`, silent: true }) } catch {}
-  render()
+  // Rail + badges only: a full render() wiped unsaved Options / server forms and typed text.
+  renderRail(); if (cur) updateBadges()
   if (total) try { new Notification('Mod Manager', { body: `${total} mod update${total === 1 ? '' : 's'} available`, silent: true }) } catch {}
 }
 setTimeout(() => backgroundUpdates(), 8000)
@@ -1109,8 +1124,8 @@ function dlUpdate(d) {
 }
 
 // ---- Minecraft server ----
-const appendTo = (v, line) => { if (!v) return; const stick = v.scrollTop + v.clientHeight >= v.scrollHeight - 30; const d = document.createElement('div'); d.textContent = line; d.className = logClass(line); v.append(d); if (stick) v.scrollTop = v.scrollHeight }
-let srvTab = 'console', plugSrc = 'modrinth', selPlayers = new Set()
+const appendTo = (v, line) => { if (!v) return; const stick = v.scrollTop + v.clientHeight >= v.scrollHeight - 30; const d = document.createElement('div'); d.textContent = line; d.className = logClass(line); v.append(d); if (v.childElementCount > 5000) v.firstChild.remove(); if (stick) v.scrollTop = v.scrollHeight }
+let plugTimer, srvTab = 'console', plugSrc = 'modrinth', selPlayers = new Set()
 const KINDS = { profile: 'This profile (mods)', paper: 'Paper (plugins)', purpur: 'Purpur (plugins)', bedrock: 'Bedrock Dedicated Server' }
 // Minecraft § color codes -> spans (MOTD preview).
 const MC_COLORS = '000000,0000AA,00AA00,00AAAA,AA0000,AA00AA,FFAA00,AAAAAA,555555,5555FF,55FF55,55FFFF,FF5555,FF55FF,FFFF55,FFFFFF'.split(',')
@@ -1323,7 +1338,7 @@ $('#list').addEventListener('change', async e => {
 $('#list').addEventListener('input', e => {
   if (e.target.id === 'motd') $('#motdPrev').innerHTML = motdHtml(e.target.value)
   if (e.target.id === 'memRange') $('#memOut').textContent = (e.target.value / 1024).toFixed(1) + ' GB'
-  if (e.target.id === 'plugQ') { clearTimeout(timer); timer = setTimeout(pluginSearch, 350) }
+  if (e.target.id === 'plugQ') { clearTimeout(plugTimer); plugTimer = setTimeout(pluginSearch, 350) }
 })
 $('#list').addEventListener('submit', async e => {
   if (e.target.id !== 'propsForm') return
