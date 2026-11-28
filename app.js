@@ -57,8 +57,9 @@ function render() {
 // Rail only: background checks call this so an open form or console isn't rebuilt.
 function renderRail() {
   const groups = [...new Set(profiles.map(p => p.group || ''))].sort()
-  $('#rail').innerHTML = groups.map(g => (g ? `<div class="sep"></div><div class="rail-group" title="${esc(g)}">${esc(g)}</div>` : '')
-    + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''} ${running.has(p.id) ? 'playing' : ''}" draggable="true" data-id="${p.id}" data-tip="${esc(p.name)}">${avatar(p)}${Object.keys(updates[p.id] || {}).length ? `<i class="rbadge">${Object.keys(updates[p.id]).length}</i>` : ''}</button>`).join('')).join('')
+  $('#rail').innerHTML = `<button class="pfp friends" id="friendsBtn" data-tip="Friends">${ic('user')}${social.invites.length ? `<i class="rbadge">${social.invites.length}</i>` : ''}</button><div class="sep"></div>`
+    + groups.map(g => (g ? `<div class="sep"></div><div class="rail-group" title="${esc(g)}">${esc(g)}</div>` : '')
+    + profiles.filter(p => (p.group || '') === g).map(p => `<button class="pfp ${p.id === cur?.id ? 'on' : ''} ${running.has(p.id) ? 'playing' : ''} ${p.shared ? 'shared' : ''}" draggable="true" data-id="${p.id}" data-tip="${esc(p.name)}${p.shared ? ' · shared group' : ''}">${avatar(p)}${Object.keys(updates[p.id] || {}).length ? `<i class="rbadge">${Object.keys(updates[p.id]).length}</i>` : ''}</button>`).join('')).join('')
     + (profiles.length ? '<div class="sep"></div>' : '')
     + `<button class="pfp add" id="add" data-tip="New profile">${ic('plus')}</button>`
     + `<button class="pfp gear" id="settings" data-tip="${setupLeft ? 'Finish setup' : 'Settings'}">${ic('gear')}${setupLeft ? `<i class="rbadge">${setupLeft}</i>` : ''}</button>`
@@ -120,7 +121,7 @@ const row = (m, needs) => {
   ${m.icon ? `<img src="${esc(m.icon)}" alt="" loading="lazy" decoding="async">` : '<div class="noicon"></div>'}
   <div class="body"><div class="top"><b>${esc(m.name)}</b><span class="tag">${esc(m.version)}</span>
   ${src === 'local' ? '<span class="tag">Local file</span>' : cur.type === 'modrinth' ? `<span class="tag src ${src}">${SRC[src]}</span>` : ''}${m.pack ? '<span class="tag pack">Modpack</span>' : ''}
-  ${up ? `<span class="tag upd">→ ${esc(up.version ?? up)}</span>` : ''}${m.pinned ? `<span class="tag">${ic('key', 'i sm')} Pinned</span>` : ''}</div>
+  ${up ? `<span class="tag upd">→ ${esc(up.version ?? up)}</span>` : ''}${m.pinned ? `<span class="tag">${ic('key', 'i sm')} Pinned</span>` : ''}${((by) => by && social.me && by !== social.me ? `<span class="tag" title="Last changed by ${esc(by)}">${ic('user', 'i sm')} ${esc(by)}</span>` : '')(cur.shared?.state?.mods?.[m.id]?.by)}</div>
   <p>${m.note ? `📝 ${esc(m.note)} · ` : ''}${parents.length ? `Needed by ${esc(parents.join(', '))} · ` : m.deps?.length ? `Uses ${m.deps.length} dependenc${m.deps.length === 1 ? 'y' : 'ies'} · ` : ''}${m.files.length} file${m.files.length === 1 ? '' : 's'}</p></div>
   <div class="actions">
     ${up ? `<button class="icon" data-act="changes" title="What's new">${ic('file')}</button><button class="upd" data-act="update">${ic('up')} Update</button>` : ''}
@@ -264,6 +265,7 @@ $('#rail').onmouseleave = () => $('#tip').hidden = true
 $('#rail').onclick = e => {
   const b = e.target.closest('button'); if (!b) return
   if (b.id === 'add') return openNew()
+  if (b.id === 'friendsBtn') return openFriends()
   if (b.id === 'settings') return openSettings(setupLeft ? 'setup' : 'appearance')
   cur = profiles.find(p => p.id === b.dataset.id); tab = 'browse'; $('#q').value = ''; chips.clear(); $('#section').value = ''; render()
 }
@@ -480,6 +482,8 @@ async function startGame(id, quick = {}) {
     status[id] = 'Syncing…'; playButton()
     try { const r = await api.sync(id, `gist:${p.follow.gist}`, { remove: true }); setProfile(r.profile) } finally { delete status[id]; playButton() }
   }
+  // Shared group: get everyone's latest changes first so all members play with the same mods.
+  if (p.shared) { status[id] = 'Syncing group…'; playButton(); try { groupResult(await api.groupSync(id).catch(() => null), true) } finally { delete status[id]; playButton() } }
   // Missing required mods, incompatible pairs or a mod twice usually crash the game: ask first.
   const bad = (await api.conflicts(id).catch(() => [])).filter(x => x.type !== 'file')
   if (bad.length && !confirm(`This profile may crash:\n${bad.slice(0, 5).map(x => x.type === 'missing' ? `• ${x.mods.join(', ')} need ${x.depName}${x.disabled ? ' (switched off)' : ''}`
@@ -749,6 +753,7 @@ window.onEvent?.((e, d) => {
   }
   if (e === 'dl') dlUpdate(d)
   if (e === 'published') toast('Your friends got the updated mod list')
+  if (e === 'group' && d.changes.length) api.listProfiles().then(ps => { const p = ps.find(x => x.id === d.pid); if (p) groupResult({ profile: p, changes: d.changes }, true) })
   if (e === 'toast') toast(d.text, d.error)
   if (e === 'appUpdate') appUpdateProgress(d)
   if ((e === 'slog' || e === 'sstatus') && cur?.id === d.pid && tab === 'server') e === 'slog' ? appendTo($('#slog'), d.line) : srvTab !== 'settings' && showServer()
@@ -804,7 +809,7 @@ async function showOptions() {
   if (cur.type !== 'modrinth') return $('#list').innerHTML = `<form class="opts" id="optsForm">
     <label>STEAM LAUNCH ARGUMENTS <span class="muted small">(used by Play)</span><input name="args" value="${esc(o.args || '')}" placeholder="-windowed -nosplash"></label>
     <div class="row"><button class="primary">${ic('check')} Save options</button><button type="button" id="playVanilla">${ic('play')} Play without mods</button></div>
-    <p class="muted small">"Play without mods" removes this profile's files from the game folder and starts the game. Your mod list is kept; press Deploy or Play to bring the mods back.</p></form>` + await gameExtras() + diskBox, showDisk()
+    <p class="muted small">"Play without mods" removes this profile's files from the game folder and starts the game. Your mod list is kept; press Deploy or Play to bring the mods back.</p></form>` + await gameExtras() + groupBox + diskBox, showDisk(), showGroupBox()
   const javas = await api.javaList().catch(() => [])
   $('#list').innerHTML = `<form class="opts" id="optsForm">
     <div class="row"><label>MAX MEMORY (MB)<input name="maxMem" type="number" min="512" step="512" value="${o.maxMem || ''}" placeholder="Default"></label>
@@ -823,8 +828,8 @@ async function showOptions() {
     <h4 class="muted">INSTANCE</h4>
     <div class="row"><button type="button" id="optRepair">${ic('wrench')} Repair game files</button><button type="button" id="optExport">${ic('file')} Export .mrpack</button>
       <button type="button" id="optDup">${ic('copy')} Duplicate</button><button type="button" id="optDir">${ic('folder')} Open folder</button></div>
-    <p class="muted small">Loader: ${esc(cur.mc.loader)} ${esc(cur.mc.loaderVersion || '(latest on first launch)')} · Game folder: ${esc(cur.target)}</p></form>` + diskBox
-  showDisk()
+    <p class="muted small">Loader: ${esc(cur.mc.loader)} ${esc(cur.mc.loaderVersion || '(latest on first launch)')} · Game folder: ${esc(cur.target)}</p></form>` + groupBox + diskBox
+  showDisk(); showGroupBox()
 }
 const diskBox = `<div class="opts"><h4 class="muted">DISK SPACE</h4><div class="row" id="disk"><span class="muted small">Measuring…</span></div></div>`
 async function showDisk() {
@@ -1425,6 +1430,12 @@ $('#list').addEventListener('keydown', e => {
   api.serverCmd(cur.id, e.target.value); e.target.value = ''
 })
 $('#list').addEventListener('change', async e => { if (e.target.id === 'autoBackup') { const p = await run(() => api.updateProfile(cur.id, { backupWorlds: e.target.checked })); if (p) setProfile(p) } })
+$('#list').addEventListener('change', async e => {
+  if (e.target.id !== 'gInvite' || !e.target.value) return
+  const u = e.target.value; e.target.disabled = true
+  const r = await run(() => api.groupInvite(cur.id, u)); if (r) groupResult(r), toast(`Invited ${u}. They see it under Friends within a couple of minutes.`)
+  showOptions()
+})
 $('#list').addEventListener('change', e => { if (e.target.id === 'javaPick') { const i = $('#optsForm [name=java]'); i.hidden = e.target.value !== 'custom'; if (!i.hidden) i.focus() } })
 
 // ---- Import preview (diff against an existing profile) ----
@@ -1558,6 +1569,10 @@ $('#list').addEventListener('click', async e => {
   if (t.id === 'toolAdd') { const exe = await api.openFile(['exe', 'bat', 'cmd']); if (!exe) return; const name = await ask('Tool name', exe.split(/[\\/]/).pop().replace(/\.\w+$/, '')); if (name !== null) { const args = await ask('Arguments (optional)', ''); save([...(cur.tools || []), { name, exe, args: args || '' }]) } }
   if (t.dataset.lo) { const row = t.closest('.lo'), to = +t.dataset.lo < 0 ? row.previousElementSibling : row.nextElementSibling; if (to?.querySelector('[data-lo]:not([disabled])')) +t.dataset.lo < 0 ? to.before(row) : to.after(row) }
   if (t.id === 'loSave') { const rows = [...document.querySelectorAll('#loList .lo')]; const p = await run(() => api.setLoadOrder(id, rows.map(r => r.dataset.plug), rows.filter(r => !r.querySelector('input').checked).map(r => r.dataset.plug))); if (p) setProfile(p), toast('Load order saved — Deploy to apply') }
+  if (t.id === 'gCreate') { t.disabled = true; const r = await run(() => api.groupCreate(id)); if (r) groupResult(r), toast('Shared group made. Invite friends below.'); return showOptions() }
+  if (t.id === 'gSync') { t.disabled = true; const r = await run(() => api.groupSync(id)); if (r) groupResult(r), r.changes.length || toast('Already up to date'); return showOptions() }
+  if (t.id === 'gLeave' && confirm('Leave this group? The profile stays here with its mods; it just stops syncing.')) { const r = await run(() => api.groupLeave(id)); if (r) setProfile(r.profile), renderRail(), toast('Left the group'); return showOptions() }
+  if (t.dataset.gkick && confirm(`Remove ${t.dataset.gkick} from the group? Their copy stops syncing.`)) { const r = await run(() => api.groupKick(id, t.dataset.gkick)); if (r) groupResult(r); return showOptions() }
   if (t.id === 'diskClean') { t.disabled = true; const n = await run(() => api.cleanup(id)); if (n != null) toast(`Removed ${n} leftover folder${n === 1 ? '' : 's'}`); return showDisk() }
   if (t.id === 'purge') { const p = await run(() => api.purge(id)); if (p) setProfile(p), toast('Mods removed from the game folder') }
   if (t.id === 'collOpen') { $('#collQ').value = ''; $('#collDlg').showModal(); collSearch() }
@@ -1592,3 +1607,88 @@ $('#collBody').onclick = async e => {
 
 // Bytes for people (world backups).
 const gb = n => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : n >= 1e6 ? (n / 1e6).toFixed(0) + ' MB' : Math.ceil(n / 1e3) + ' KB'
+
+// ---- Friends + shared groups (public GitHub gists, see social.js) ----
+let social = { friends: [], invites: [] }, ftab = 'online'
+const avatarOf = u => `https://github.com/${encodeURIComponent(u)}.png?size=64`
+async function loadFriends() {
+  social = await api.friends().catch(e => ({ friends: [], invites: [], error: e.message.replace(/^Error invoking remote method '\w+': (Error: )?/, '') }))
+  renderRail(); if ($('#friendsDlg').open) drawFriends()
+}
+function openFriends() { $('#friendsDlg').showModal(); drawFriends(); loadFriends() }
+function drawFriends() {
+  document.querySelectorAll('#ftabs [data-ftab]').forEach(b => b.classList.toggle('on', b.dataset.ftab === ftab))
+  const s = social, groups = profiles.filter(p => p.shared), body = $('#friendsBody')
+  if (s.error) return body.innerHTML = `<p class="muted">${esc(s.error)}</p><button class="primary" data-fgo>Open Settings</button>`
+  const inv = s.invites.map(i => `<div class="banner">${ic('user')}<div><b>${esc(i.from)} invited you to “${esc(i.name)}”</b><p>Everyone in a group can add, remove, update and switch off mods. All your apps keep the same list.</p></div>
+    <button data-fignore="${esc(i.group)}">Ignore</button><button class="primary" data-fjoin="${esc(i.from)}" data-group="${esc(i.group)}" data-name="${esc(i.name)}">Join</button></div>`).join('')
+  if (ftab === 'add') return body.innerHTML = inv + `<form id="faddForm" class="row"><input id="faddName" placeholder="GitHub username" maxlength="39" autocomplete="off" autofocus><button class="primary grow0">Add friend</button></form>
+    <p class="muted small">Friends are GitHub users with Mod Manager. They show as online once they add you back.${s.me ? ` You are <b>${esc(s.me)}</b>.` : ''}</p>
+    <label class="check"><input type="checkbox" class="switch" id="fpresence" ${s.presence ? 'checked' : ''}> Share my online status and what I'm playing (a public gist on your GitHub)</label>`
+  const list = s.friends.filter(f => ftab === 'all' || (f.online && f.mutual))
+  const status = f => !f.mutual ? "Hasn't added you back yet" : f.playing ? `Playing ${f.playing}` : f.online ? 'Online' : f.seen ? `Last seen ${ago(f.seen)}` : 'Offline'
+  body.innerHTML = inv + `<h4 class="muted">${ftab === 'online' ? 'ONLINE' : 'ALL FRIENDS'} — ${list.length}</h4>` + (list.map(f => `<div class="friend"><span class="av"><img src="${avatarOf(f.login)}" alt=""><i class="dot ${f.online && f.mutual ? 'on' : ''}"></i></span>
+    <div><b>${esc(f.login)}</b><small class="muted">${esc(status(f))}</small></div>
+    ${groups.length ? `<select data-finvite="${esc(f.login)}"><option value="">Invite to group…</option>${groups.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>` : ''}
+    <button class="icon" data-fremove="${esc(f.login)}" title="Remove friend">${ic('trash')}</button></div>`).join('')
+    || `<p class="muted center">${ftab === 'online' ? 'No friends online.' : 'No friends yet.'} <button class="linkish" data-ftab="add">Add a friend</button></p>`)
+    + (groups.length ? '' : '<p class="muted small">To invite friends, open a profile → Options → Make shared group.</p>')
+}
+$('#ftabs').onclick = e => { const b = e.target.closest('[data-ftab]'); if (b) ftab = b.dataset.ftab, drawFriends() }
+$('#friendsBody').addEventListener('click', async e => {
+  const t = e.target.closest('button'); if (!t) return
+  if (t.dataset.ftab) return ftab = t.dataset.ftab, drawFriends()
+  if (t.hasAttribute('data-fgo')) return $('#friendsDlg').close(), openSettings('sites')
+  if (t.dataset.fremove && confirm(`Remove ${t.dataset.fremove} from your friends?`)) { await run(() => api.friendRemove(t.dataset.fremove)); return loadFriends() }
+  if (t.dataset.fignore) { await api.ignoreInvite(t.dataset.fignore); return loadFriends() }
+  if (t.dataset.fjoin) {
+    t.disabled = true; t.textContent = 'Joining…'
+    const r = await run(() => api.groupJoin(t.dataset.fjoin, t.dataset.group, t.dataset.name))
+    if (!r) return t.disabled = false, t.textContent = 'Join'
+    $('#friendsDlg').close(); tab = 'installed'; await refresh(r.profile.id); groupResult(r, true); loadFriends()
+    toast(`Joined ${r.profile.name}${r.failed.length ? `, ${r.failed.length} mod(s) couldn't install` : ''}`, !!r.failed.length)
+  }
+})
+$('#friendsBody').addEventListener('submit', async e => {
+  e.preventDefault(); const n = $('#faddName').value.trim(); if (!n) return
+  const u = await run(() => api.friendAdd(n)); if (u) toast(`Added ${u}. They show as online once they add you back.`), ftab = 'all', loadFriends()
+})
+$('#friendsBody').addEventListener('change', async e => {
+  if (e.target.id === 'fpresence') return run(() => api.saveSettings({ presence: e.target.checked }))
+  const u = e.target.dataset.finvite, pid = e.target.value; if (!u || !pid) return
+  e.target.disabled = true
+  const r = await run(() => api.groupInvite(pid, u)); if (r) groupResult(r), toast(`Invited ${u} to ${r.profile.name}`)
+  e.target.value = ''; e.target.disabled = false
+})
+// Sync result: keep the profile, say what friends changed. quiet: no repeat of install failures (background syncs retry them).
+function groupResult(r, quiet) {
+  if (!r) return
+  setProfile(r.profile); renderRail(); if (cur?.id === r.profile.id) updateBadges()
+  r.changes?.slice(0, 4).forEach(c => toast(`${c.by} ${c.text} in ${r.profile.name}`))
+  if (r.changes?.length > 4) toast(`…and ${r.changes.length - 4} more changes in ${r.profile.name}`)
+  if (!quiet && r.failed?.length) toast(`${r.failed.length} group mod(s) couldn't install here: ${r.failed[0]}`, true)
+  if (r.left) toast(`You're no longer in this group. "${r.profile.name}" stays here as a normal profile.`)
+  if (r.changes?.length && cur?.id === r.profile.id && tab === 'installed') showInstalled()
+}
+const groupBox = `<div class="opts"><h4 class="muted">SHARED GROUP</h4><div id="gbox"><span class="muted small">Loading…</span></div></div>`
+async function showGroupBox() {
+  const id = cur.id
+  if (cur.shared && !social.me && !social.error) await loadFriends()
+  const el = $('#gbox'), g = cur.shared; if (!el || cur.id !== id) return
+  if (!g) return el.innerHTML = `<p class="muted small">Share this profile with friends: everyone in the group can add, remove, update and switch off mods, and every member's app keeps the same list. Needs a GitHub token (Settings → Mod sites).</p>
+    <div class="row"><button type="button" class="primary grow0" id="gCreate">${ic('user')} Make shared group</button></div>`
+  const members = Object.entries(g.state?.members || {}).filter(([, m]) => !m.del).map(([u]) => u), mine = u => u.toLowerCase() === social.me?.toLowerCase()
+  const canInvite = social.friends.filter(f => !members.some(m => m.toLowerCase() === f.login.toLowerCase()))
+  el.innerHTML = members.map(u => `<div class="friend"><span class="av"><img src="${avatarOf(u)}" alt=""></span><div><b>${esc(u)}${mine(u) ? ' (you)' : ''}</b></div>
+      ${mine(u) ? '' : `<button type="button" class="icon" data-gkick="${esc(u)}" title="Remove from group">${ic('x')}</button>`}</div>`).join('')
+    + `<div class="row">${canInvite.length ? `<select id="gInvite"><option value="">Invite a friend…</option>${canInvite.map(f => `<option>${esc(f.login)}</option>`).join('')}</select>` : '<span class="muted small">Add friends (left bar → Friends) to invite them.</span>'}
+      <button type="button" class="grow0" id="gSync">${ic('refresh')} Sync now</button><button type="button" class="danger grow0" id="gLeave">Leave group</button></div>
+    <p class="muted small">Changes reach the others within a couple of minutes, and every Play syncs first.${g.synced ? ` Last synced ${new Date(g.synced).toLocaleTimeString()}.` : ''}${g.failed?.length ? ` ${g.failed.length} mod(s) couldn't install here.` : ''}</p>`
+}
+// Every 2 minutes: publish my status, sync shared groups, refresh friends + invites.
+async function socialTick() {
+  const on = await api.presenceTick().catch(() => false)
+  for (const p of profiles.filter(p => p.shared)) groupResult(await api.groupSync(p.id).catch(() => null), true)
+  if (on) loadFriends()
+}
+setTimeout(socialTick, 6000); setInterval(socialTick, 2 * 60e3)

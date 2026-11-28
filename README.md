@@ -83,6 +83,13 @@ Settings (gear, or Ctrl+,) has sections: Appearance, Accounts, Minecraft, Mod si
 - **Pack website**: https://v3rkku1.github.io/mod-manager/ lets anyone look up a GitHub username, see their published packs and mods, install with one click, and keep a friends list (saved in the browser). Browsing needs no account; only publishing needs a GitHub token.
 - **Import preview**: pasting a code shows the pack and lets you sync it into an existing profile, with a list of new / changed / extra mods.
 
+## Friends and shared groups
+
+Needs a GitHub token with `gist` scope (Settings → Mod sites). Everything is stored in public gists on each person's own GitHub; there is no server.
+
+- **Friends** (top of the left bar): add GitHub usernames. Friends who add you back show online / last seen / what they're playing (turn off under Add friend). Updates every 2 minutes.
+- **Shared group**: profile → Options → Make shared group, then invite friends. Everyone in the group can add, remove, update and switch off any mod; every member's app keeps the same list (last change per mod wins). Invites appear in the friend's Friends window with a Join button. Play syncs the group first. Leaving or being removed keeps the profile as a normal one.
+
 ## Minecraft server
 
 Server tab (Minecraft profiles), a self-hosting panel similar to SquidServers:

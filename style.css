@@ -517,3 +517,18 @@ button[data-href] { color: #fff; text-decoration: none !important; }
 .pfp.dropa { box-shadow: 0 7px 0 -3px var(--text); }
 .dragging { opacity: .4; }
 #pasteText { width: 100%; font-family: ui-monospace, monospace; resize: vertical; }
+/* Friends + shared groups */
+#friendsDlg { width: min(640px, 94vw); }
+.fhead { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; padding-right: 32px; }
+.fhead h2 { display: flex; align-items: center; gap: 8px; margin: 0; }
+.fhead .dtabs { margin: 0; border: 0; }
+.fhead .addf { background: var(--ok); color: #fff; }
+.friend { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; }
+.friend:hover { background: var(--hover); }
+.friend > div { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.friend select { width: auto; }
+.friend .av { position: relative; width: 36px; height: 36px; flex: none; }
+.friend .av img { width: 100%; height: 100%; border-radius: 50%; }
+.friend .av .dot { position: absolute; right: -2px; bottom: -2px; width: 12px; height: 12px; border: 3px solid var(--main); box-sizing: content-box; }
+.pfp.shared { outline: 2px solid var(--ok); outline-offset: 2px; }
+.pfp.friends { color: var(--text); }

@@ -6,6 +6,7 @@ const { zipSync, unzipSync, strToU8, strFromU8 } = require('fflate')
 const { json, get, q, inside, write, remove, walk } = require('./lib')
 const MC = require('./mc'), auth = require('./auth'), tunnel = require('./tunnel'), lib = require('./lib')
 const crypto = require('crypto')
+const Social = require('./social')
 
 const TS = 'https://thunderstore.io', MR = 'https://api.modrinth.com/v2'
 // Which sites each profile type can install from; first is the default.
@@ -137,9 +138,14 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     if (p.publish && p.publishRev && settings().githubToken && shareRev(p) !== p.publishRev) {
       clearTimeout(autoPub[p.id]); autoPub[p.id] = setTimeout(() => serial(publishGist)(p.id).then(() => emit('published', { pid: p.id }), () => {}), 5000)
     }
+    // Shared group: push my mod changes to the group (debounced); syncs themselves don't re-trigger.
+    if (p.shared && !inGroupSync[p.id] && modsKey(p) !== p.shared.key) {
+      clearTimeout(groupT[p.id]); groupT[p.id] = setTimeout(() => serial(groupSync)(p.id).then(r => r && emit('group', { pid: p.id, changes: r.changes, failed: r.failed }), () => {}), 4000)
+    }
     return p
   }
-  const autoPub = {}
+  const autoPub = {}, groupT = {}, inGroupSync = {}
+  const social = Social(() => settings().githubToken)
   const shareRev = p => crypto.createHash('sha1').update(JSON.stringify(shareData(p))).digest('hex')
   const ctx = { files, settings, dataDir: path.join(root, '..') }
   const S = Object.fromEntries(Object.keys(ID).map(k => [k, require(`./sources/${k}`)(ctx)]))
@@ -411,6 +417,63 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
     const g = r || await json('https://api.github.com/gists', headers, { method: 'POST', body })
     const cur = load(pid) // re-read: mods may have changed while uploading
     return save({ ...cur, publish: g.id, publishUser: g.owner?.login || p.publishUser, publishRev: shareRev(p) })
+  }
+  // ---- Shared groups: one profile kept the same for every member; anyone can add, remove, update or switch off any mod. ----
+  // Each member writes the whole group state to their own public gist; apps merge every member's copy (last change per mod wins).
+  const groupHead = p => ({ v: 1, n: p.name, t: p.type, g: p.game, gi: p.gameId, gn: p.gameName, mc: p.mc && { version: p.mc.version, loader: p.mc.loader },
+    i: p.icon?.startsWith('https://') ? p.icon : undefined, b: p.banner?.startsWith('https://') ? p.banner : undefined })
+  const localMods = p => Object.fromEntries(p.mods.filter(m => m.src !== 'local').map(m => [m.id, { src: srcOf(p, m), v: vidOf(m), off: !!m.disabled }]))
+  const modsKey = p => JSON.stringify(localMods(p))
+  // A friend's gist is untrusted: keep only valid entries, and only for the same game (and Minecraft version + loader).
+  const cleanGroup = (s, p) => s && s.t === p.type && (s.g || '') === (p.game || '') && (p.type !== 'modrinth' || (s.mc?.version === p.mc.version && s.mc?.loader === p.mc.loader)) ? {
+    members: Object.fromEntries(Object.entries(s.members || {}).filter(([u, m]) => Social.USER.test(u) && typeof m?.t === 'number')
+      .map(([u, m]) => [u, { t: m.t, by: String(m.by || '').slice(0, 39), ...(m.del ? { del: true } : {}) }])),
+    mods: Object.fromEntries(Object.entries(s.mods || {}).filter(([id, e]) => typeof e?.t === 'number' && SOURCES[p.type].includes(e.src) && ID[e.src].test(id) && VER.test(e.v))
+      .map(([id, e]) => [id, { src: e.src, v: e.v, t: e.t, by: String(e.by || '').slice(0, 39), ...(e.off ? { off: true } : {}), ...(e.del ? { del: true } : {}) }])),
+  } : null
+  // edit.members: invites / kicks / leaving, as member entries. Returns { profile, changes: [{ by, text }], failed, left }.
+  async function groupSync(pid, edit = {}) {
+    if (!load(pid).shared) return null
+    inGroupSync[pid] = true
+    try {
+      let p = load(pid)
+      const g = p.shared, me = await social.me(), now = Date.now(), last = g.state?.mods || {}, mods = { ...last }, skip = new Set(g.failed || [])
+      // My own changes since the last sync become timestamped entries (mods that failed to install here are not removals).
+      const cur = localMods(p)
+      for (const [id, e] of Object.entries(cur)) { const l = last[id]; if (!l || l.del || l.v !== e.v || l.src !== e.src || !!l.off !== e.off) mods[id] = { ...e, t: now, by: me } }
+      for (const [id, l] of Object.entries(last)) if (!l.del && !cur[id] && !skip.has(id)) mods[id] = { src: l.src, v: l.v, t: now, by: me, del: true }
+      const members = Social.lww(g.state?.members, edit.members)
+      if (!members[me]) members[me] = { t: now, by: me }
+      const others = Object.keys(members).filter(u => !members[u].del && u.toLowerCase() !== me.toLowerCase())
+      const remote = (await Promise.all(others.map(u => social.group(u, g.id).then(s => cleanGroup(s, p), () => null)))).filter(Boolean)
+      const merged = { members: Social.lww(members, ...remote.map(r => r.members)), mods: Social.lww(mods, ...remote.map(r => r.mods)) }
+      // Apply the merged list here.
+      const changes = [], failed = [], failedIds = [], name = id => load(pid).mods.find(m => m.id === id)?.name || id
+      for (const [id, e] of Object.entries(merged.mods)) {
+        const have = cur[id]
+        if (e.del) { if (have) changes.push({ by: e.by, text: `removed ${name(id)}` }), uninstall(pid, id); continue }
+        if (have && have.v === e.v) continue
+        await install(pid, e.src, id, e.v, undefined, false).then(() => changes.push({ by: e.by, text: `${have ? 'updated' : 'added'} ${name(id)}` }),
+          err => (failed.push(`${id}: ${err.message}`), failedIds.push(id)))
+      }
+      p = load(pid)
+      for (const m of p.mods) { const e = merged.mods[m.id]; if (e && !e.del && !!m.disabled !== !!e.off) m.disabled = e.off || undefined, changes.push({ by: e.by, text: `switched ${e.off ? 'off' : 'on'} ${m.name}` }) }
+      const state = { ...groupHead(p), id: g.id, ...merged }, rev = crypto.createHash('sha1').update(JSON.stringify(state)).digest('hex')
+      if (rev !== g.rev) await social.setGroup(g.id, state)
+      p.shared = { id: g.id, state: merged, rev, failed: failedIds, key: modsKey(p), synced: now }
+      const left = !!merged.members[me]?.del
+      if (left) delete p.shared // left the group, or a member removed me: the profile stays as a normal one
+      return { profile: save(p), changes: changes.filter(c => c.by.toLowerCase() !== me.toLowerCase()), failed, left }
+    } finally { delete inGroupSync[pid] }
+  }
+  const member = (u, del) => ({ [u]: { t: Date.now(), by: u, ...(del ? { del: true } : {}) } })
+  async function presenceTick() {
+    const s = settings()
+    if (!s.githubToken || s.presence === false) return false
+    const week = Date.now() - 7 * 86400e3
+    await social.setPresence({ v: 1, t: Date.now(), playing: Object.keys(running).map(id => { try { return load(id).name } catch { return null } }).filter(Boolean),
+      friends: s.friends || [], invites: (s.sentInvites || []).filter(i => i.t > week) })
+    return true
   }
   async function syncData(pid, d, drop, cfg = {}) {
     let p = load(pid)
@@ -751,7 +814,7 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
   const serialDeploy = (id, o) => serial(deployRaw)(id, o)
   const parallel = ['listProfiles', 'games', 'mcVersions', 'search', 'checkUpdates', 'details', 'getSettings', 'launch', 'exportCode', 'exportR2', 'exportFile',
     'preview', 'checkFollow', 'analyzeCrash', 'javaList', 'conflicts', 'orphans', 'serverStatus', 'serverCmd', 'serverStop', 'serverStart', 'serverShare', 'inviteCode', 'serverRestart', 'serversRunning',
-    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'watchGame', 'playCustom', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool', 'diskUsage',
+    'serverProps', 'serverPlayers', 'playerAction', 'backups', 'backup', 'pluginSearch', 'shareLog', 'diagnostics', 'sha1Url', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'syncStatus', 'snapshots', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'watchGame', 'playCustom', 'loadOrder', 'collections', 'collectionMods', 'endorse', 'runTool', 'diskUsage', 'friends', 'presenceTick',
     'accounts', 'loginStart', 'loginFinish', 'filters', 'running', 'getLog', 'stop', 'play', 'repair', 'worlds', 'logFiles', 'readLog', 'exportMrpack']
 
   return Object.fromEntries(Object.entries({
@@ -782,7 +845,8 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       if ('launcher' in patch && !['official', 'prism', 'multimc', 'custom'].includes(patch.launcher)) delete patch.launcher
       if ('updateMode' in patch && !['auto', 'ask', 'manual'].includes(patch.updateMode)) delete patch.updateMode
       if ('profileOrder' in patch && !(Array.isArray(patch.profileOrder) && patch.profileOrder.length < 1000 && patch.profileOrder.every(x => typeof x === 'string' && /^\w+$/.test(x)))) delete patch.profileOrder
-      const pick = ['profileOrder', 'curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'prismPath', 'launcher', 'customCmd', 'autoStart', 'autoUpdate', 'updateMode', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
+      if ('presence' in patch) patch.presence = !!patch.presence
+      const pick = ['presence', 'profileOrder', 'curseforgeKey', 'nexusKey', 'nxmHandler', 'modrinthToken', 'msClientId', 'githubToken', 'prismPath', 'launcher', 'customCmd', 'autoStart', 'autoUpdate', 'updateMode', 'tunnel', 'deployMode', ...Object.keys(LOOK)].filter(k => k in patch)
       return setSettingsRaw({ ...Object.fromEntries(pick.map(k => [k, patch[k]])), ...(patch.launch ? { launch: cleanLaunch(patch.launch) } : {}) })
     },
 
@@ -956,6 +1020,52 @@ module.exports = (root, { emit = () => {}, encrypt = s => s, decrypt = s => s } 
       return save({ ...p, mods: rest })
     },
     diskUsage,
+    // ---- Friends (GitHub usernames; status from each friend's public presence gist) ----
+    friends: async () => {
+      const s = settings(), me = await social.me(), list = s.friends || [], now = Date.now(), lc = x => String(x).toLowerCase()
+      const ps = await Promise.all(list.map(u => social.presence(u).catch(() => null)))
+      const mine = new Set(fs.readdirSync(root).flatMap(d => { try { return [load(d).shared?.id] } catch { return [] } }).filter(Boolean))
+      return { me, presence: s.presence !== false,
+        friends: list.map((u, i) => { const x = ps[i] || {}, t = typeof x.t === 'number' ? x.t : 0
+          return { login: u, online: now - t < 6 * 60e3, seen: t || null, playing: [].concat(x.playing || []).map(String).slice(0, 3).join(', ').slice(0, 80),
+            mutual: [].concat(x.friends || []).some(f => lc(f) === lc(me)) } }),
+        invites: ps.flatMap((x, i) => [].concat(x?.invites || []).filter(v => lc(v?.to) === lc(me) && /^[0-9a-f]{12}$/.test(v.group) && !mine.has(v.group) && !(s.ignoredInvites || []).includes(v.group))
+          .map(v => ({ from: list[i], group: v.group, name: String(v.name || 'Group').slice(0, 40) }))) }
+    },
+    friendAdd: async name => {
+      const u = (await social.user(String(name).trim().replace(/^@/, ''))).login, list = settings().friends || []
+      if (!list.some(x => x.toLowerCase() === u.toLowerCase())) setSettingsRaw({ friends: [...list, u].slice(0, 200) }), presenceTick().catch(() => {})
+      return u
+    },
+    friendRemove: name => { setSettingsRaw({ friends: (settings().friends || []).filter(x => x !== name) }); presenceTick().catch(() => {}) },
+    presenceTick,
+    ignoreInvite: gid => { setSettingsRaw({ ignoredInvites: [...(settings().ignoredInvites || []), String(gid)].slice(-100) }) },
+    // ---- Shared groups ----
+    groupCreate: async pid => {
+      const p = load(pid)
+      if (p.follow) throw new Error('Unfollow this pack first: a followed pack can only be changed by its owner')
+      if (!p.shared) save({ ...p, shared: { id: crypto.randomBytes(6).toString('hex'), key: modsKey(p) } })
+      return groupSync(pid)
+    },
+    groupSync: pid => groupSync(pid),
+    groupInvite: async (pid, user) => {
+      if (!Social.USER.test(user)) throw new Error('Unknown user')
+      const r = await groupSync(pid, { members: member(user) }), s = settings()
+      setSettingsRaw({ sentInvites: [...(s.sentInvites || []).filter(i => !(i.to === user && i.group === r.profile.shared.id)), { to: user, group: r.profile.shared.id, name: r.profile.name, t: Date.now() }].slice(-50) })
+      await presenceTick().catch(() => {})
+      return r
+    },
+    groupKick: (pid, user) => groupSync(pid, { members: member(user, true) }),
+    groupLeave: async pid => groupSync(pid, { members: member(await social.me(), true) }),
+    groupJoin: async (from, gid, name) => {
+      if (!Social.USER.test(from) || !/^[0-9a-f]{12}$/.test(gid)) throw new Error('Invalid invite')
+      const raw = await social.group(from, gid)
+      if (!raw) throw new Error(`${from} hasn't shared this group yet. Try again in a minute.`)
+      const p = create({ name: name || raw.n, type: raw.t, game: raw.g, gameId: raw.gi, gameName: raw.gn, mc: raw.mc, icon: raw.i, banner: raw.b })
+      const c = cleanGroup(raw, p)
+      save({ ...p, shared: { id: gid, state: { members: c.members, mods: {} }, key: modsKey(p) } })
+      return groupSync(p.id)
+    },
     cleanup: async pid => {
       const { orphans } = await diskUsage(pid)
       for (const o of orphans) fs.rmSync(inside(path.join(dir(pid), 'files'), o), { recursive: true, force: true })

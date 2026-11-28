@@ -9,7 +9,8 @@ const names = ['listProfiles', 'createProfile', 'updateProfile', 'deleteProfile'
   'serverPlayers', 'playerAction', 'backups', 'backup', 'restoreBackup', 'deleteBackup',
   'setServerKind', 'setServerIcon', 'sha1Url', 'resetPlayer', 'pluginSearch', 'pluginInstall', 'pluginRemove', 'shareLog', 'updateLoader', 'diagnostics',
   'pickFolder', 'saveFile', 'openFile', 'openFolder', 'openProfileFolder', 'openExternal', 'profilesDir', 'installUpdate', 'appVersion', 'checkUpdate', 'downloadUpdate', 'titlebar', 'playitStatus', 'playitLinkStart', 'playitLinkFinish', 'playitUnlink', 'syncStatus', 'setSyncDir', 'syncNow', 'syncPull', 'snapshot', 'snapshots', 'restoreSnapshot', 'changelog', 'setupStatus', 'playOfficial', 'playPrism', 'playCustom', 'addServer', 'worldBackups', 'worldBackup', 'backupWorlds', 'worldRestore', 'removeServer',
-  'moveMod', 'purge', 'fomodFinish', 'fomodCancel', 'loadOrder', 'setLoadOrder', 'setTools', 'runTool', 'collections', 'collectionMods', 'endorse', 'diskUsage', 'cleanup']
+  'moveMod', 'purge', 'fomodFinish', 'fomodCancel', 'loadOrder', 'setLoadOrder', 'setTools', 'runTool', 'collections', 'collectionMods', 'endorse', 'diskUsage', 'cleanup',
+  'friends', 'friendAdd', 'friendRemove', 'presenceTick', 'ignoreInvite', 'groupCreate', 'groupSync', 'groupInvite', 'groupKick', 'groupLeave', 'groupJoin']
 contextBridge.exposeInMainWorld('api', Object.fromEntries(names.map(n => [n, (...a) => ipcRenderer.invoke(n, ...a)])))
 contextBridge.exposeInMainWorld('platform', process.platform)
 contextBridge.exposeInMainWorld('filePath', f => webUtils.getPathForFile(f))

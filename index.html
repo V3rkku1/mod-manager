@@ -281,6 +281,10 @@
 
 <dialog id="quickDlg"><input id="quickQ" placeholder="Jump to a profile…" autocomplete="off"><div id="quickList"></div></dialog>
 
+<dialog id="friendsDlg"><button type="button" class="icon close" data-close><svg class="i"><use href="#i-x"/></svg></button>
+  <div class="fhead"><h2><svg class="i"><use href="#i-user"/></svg> Friends</h2><div class="dtabs" id="ftabs"><button data-ftab="online" class="on">Online</button><button data-ftab="all">All</button><button data-ftab="add" class="addf">Add friend</button></div></div>
+  <div id="friendsBody"></div></dialog>
+
 <dialog id="pasteDlg"><form id="pasteForm"><h2>Install a list of mods</h2>
   <p class="muted small">One per line: a mod name, a Modrinth or Thunderstore link, or a mod ID. Names install the top search result.</p>
   <textarea id="pasteText" rows="10" placeholder="sodium&#10;https://modrinth.com/mod/lithium&#10;Mod Menu"></textarea>

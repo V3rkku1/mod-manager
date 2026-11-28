@@ -9,7 +9,7 @@
     "dist": "electron-builder --win",
     "test:launcher": "node test-launcher.js",
     "test:server": "node test-server.js && node test-server-features.js && node test-server-types.js",
-    "test:sync": "node test-sync.js && node test-liveshare.js",
+    "test:sync": "node test-sync.js && node test-liveshare.js && node test-groups.js",
     "test:features": "node test-features.js"
   },
   "build": {
@@ -34,7 +34,8 @@
       "!test-playit.js",
       "!playit-*.exe",
       "!test-sync.js",
-      "!test-sync-friend.js"
+      "!test-sync-friend.js",
+      "!test-groups.js"
     ],
     "win": {
       "target": [
